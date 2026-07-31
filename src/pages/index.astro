@@ -1,0 +1,80 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import Metric from "../components/Metric.astro";
+import { readSnapshot } from "../lib/snapshot";
+import { formatDate, formatDateTime, projectHref, statusClass } from "../lib/view";
+
+const snapshot = await readSnapshot();
+const projects = snapshot.initiative.projectIds.map((id) => snapshot.projects[id]).filter(Boolean);
+const issues = Object.values(snapshot.issues);
+const completed = issues.filter((issue) => ["completed", "canceled"].includes(issue.state.type)).length;
+const blockedIds = new Set(snapshot.relations.filter((relation) => relation.type === "blocks").map((relation) => relation.targetId));
+---
+
+<BaseLayout title={`${snapshot.initiative.name} · Initiative atlas`} description={snapshot.initiative.summary} generatedAt={snapshot.generatedAt}>
+  <section class="hero">
+    <div class="eyebrow">Linear initiative</div>
+    <div class="hero-heading">
+      <div>
+        <h1>{snapshot.initiative.name}</h1>
+        {snapshot.initiative.summary && <p>{snapshot.initiative.summary}</p>}
+      </div>
+      <a class="button" href={snapshot.initiative.url} target="_blank" rel="noopener noreferrer">Open in Linear <span aria-hidden="true">↗</span></a>
+    </div>
+    <div class="hero-meta">
+      <span class="status status--initiative">{snapshot.initiative.status}</span>
+      {snapshot.initiative.health && <span>Health: {snapshot.initiative.health}</span>}
+      <span>Target: {formatDate(snapshot.initiative.targetDate)}</span>
+    </div>
+  </section>
+
+  <section class="metric-grid" aria-label="Initiative summary">
+    <Metric label="Projects" value={projects.length} />
+    <Metric label="Issues" value={issues.length} />
+    <Metric label="Completed" value={completed} note={issues.length ? `${Math.round(completed / issues.length * 100)}% of issues` : "No issues"} />
+    <Metric label="Blocked" value={blockedIds.size} note={`${snapshot.boundaries && Object.keys(snapshot.boundaries).length} external dependencies`} />
+  </section>
+
+  {snapshot.initiative.descriptionHtml && (
+    <section class="content-section prose">
+      <div class="section-heading"><div><span class="eyebrow">Context</span><h2>About this initiative</h2></div></div>
+      <div set:html={snapshot.initiative.descriptionHtml}></div>
+    </section>
+  )}
+
+  {snapshot.initiative.latestUpdate && (
+    <section class="content-section update-card">
+      <div class="section-heading"><div><span class="eyebrow">Latest update</span><h2>Initiative status</h2></div><time datetime={snapshot.initiative.latestUpdate.createdAt}>{formatDateTime(snapshot.initiative.latestUpdate.createdAt)}</time></div>
+      <div class="prose" set:html={snapshot.initiative.latestUpdate.bodyHtml}></div>
+      <p class="update-author">{snapshot.initiative.latestUpdate.user.name} · {snapshot.initiative.latestUpdate.health}</p>
+    </section>
+  )}
+
+  <section class="content-section">
+    <div class="section-heading">
+      <div><span class="eyebrow">Portfolio</span><h2>Projects</h2></div>
+      <a href="/timeline/">View timeline →</a>
+    </div>
+    <div class="project-grid">
+      {projects.map((project) => {
+        const projectIssues = project.issueIds.map((id) => snapshot.issues[id]).filter(Boolean);
+        const projectDone = projectIssues.filter((issue) => ["completed", "canceled"].includes(issue.state.type)).length;
+        const progress = projectIssues.length ? Math.round(projectDone / projectIssues.length * 100) : 0;
+        return (
+          <article class="project-card">
+            <div class="project-card-top">
+              <span class={statusClass(project.status.type)}>{project.status.name}</span>
+              <span>{projectIssues.length} issues</span>
+            </div>
+            <h3><a href={projectHref(project)}>{project.name}</a></h3>
+            {project.summary && <p>{project.summary}</p>}
+            <div class="progress" title={`${progress}% complete`}><span style={`width:${progress}%`}></span></div>
+            <div class="project-card-meta">
+              <span>{formatDate(project.startDate)}</span><span aria-hidden="true">→</span><span>{formatDate(project.targetDate)}</span>
+            </div>
+          </article>
+        );
+      })}
+    </div>
+  </section>
+</BaseLayout>

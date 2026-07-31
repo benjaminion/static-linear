@@ -1,0 +1,28 @@
+---
+import type { PublicIssue, PublicSnapshot } from "../lib/schema";
+import { compareIssues, issueHref, statusClass } from "../lib/view";
+
+interface Props { issues: PublicIssue[]; snapshot: PublicSnapshot; level?: number }
+const { issues, snapshot, level = 0 } = Astro.props;
+---
+
+<ul class:list={["issue-tree", { "issue-tree--nested": level > 0 }]}>
+  {issues.map((issue) => (
+    <li>
+      <div class="issue-row">
+        <a class="issue-identifier" href={issueHref(issue)}>{issue.identifier}</a>
+        <a class="issue-title" href={issueHref(issue)}>{issue.title}</a>
+        <span class={statusClass(issue.state.type)}>{issue.state.name}</span>
+        {issue.dueDate && <time datetime={issue.dueDate}>{issue.dueDate}</time>}
+      </div>
+      {issue.childIds.length > 0 && (
+        <Astro.self
+          issues={issue.childIds.map((id) => snapshot.issues[id]).filter(Boolean).sort(compareIssues)}
+          snapshot={snapshot}
+          level={level + 1}
+        />
+      )}
+    </li>
+  ))}
+</ul>
+

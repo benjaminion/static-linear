@@ -1,0 +1,141 @@
+---
+import type { PublicSnapshot } from "../lib/schema";
+import { formatDate, projectHref, serializeForScript, statusClass } from "../lib/view";
+
+interface Props { snapshot: PublicSnapshot }
+const { snapshot } = Astro.props;
+const projects = snapshot.initiative.projectIds.map((id) => snapshot.projects[id]).filter(Boolean);
+const datedIssues = Object.values(snapshot.issues).filter((issue) => issue.dueDate);
+const payload = serializeForScript({
+  projects: projects.map((project) => ({
+    id: project.id, start: project.startDate, end: project.targetDate,
+  })),
+  issues: datedIssues.map((issue) => ({ id: issue.id, projectId: issue.projectId, due: issue.dueDate })),
+  relations: snapshot.relations.filter((relation) => relation.type === "blocks"),
+});
+---
+
+<section class="timeline-shell" data-timeline>
+  <div class="toolbar" aria-label="Timeline controls">
+    <label>Project status
+      <select data-status-filter>
+        <option value="">All statuses</option>
+        {[...new Set(projects.map((project) => project.status.name))].sort().map((status) => <option>{status}</option>)}
+      </select>
+    </label>
+    <label>Scale
+      <select data-scale>
+        <option value="compact">Compact</option>
+        <option value="comfortable" selected>Comfortable</option>
+        <option value="expanded">Expanded</option>
+      </select>
+    </label>
+  </div>
+  <div class="timeline-scroll" tabindex="0" aria-label="Scrollable project timeline">
+    <div class="timeline-canvas" data-timeline-canvas>
+      <svg class="timeline-arrows" data-timeline-arrows aria-hidden="true"></svg>
+      {projects.map((project) => (
+        <article class="timeline-row" data-project-row={project.id} data-status={project.status.name}>
+          <div class="timeline-label">
+            <a href={projectHref(project)}>{project.name}</a>
+            <span class={statusClass(project.status.type)}>{project.status.name}</span>
+          </div>
+          <div class="timeline-track" data-track>
+            {project.startDate && project.targetDate ? (
+              <a
+                class="project-bar"
+                href={projectHref(project)}
+                data-start={project.startDate}
+                data-end={project.targetDate}
+                title={`${formatDate(project.startDate)} – ${formatDate(project.targetDate)}`}
+              ><span class="sr-only">{project.name}: {formatDate(project.startDate)} to {formatDate(project.targetDate)}</span></a>
+            ) : (
+              <span class="missing-range">No complete date range</span>
+            )}
+            {project.milestones.filter((milestone) => milestone.targetDate).map((milestone) => (
+              <span class="milestone-marker" data-date={milestone.targetDate} title={`${milestone.name}: ${formatDate(milestone.targetDate)}`}><span class="sr-only">{milestone.name}</span></span>
+            ))}
+            {project.issueIds.map((id) => snapshot.issues[id]).filter((issue) => issue?.dueDate).map((issue) => (
+              <a class="issue-marker" data-date={issue.dueDate} data-issue-marker={issue.id} href={`/issues/${issue.id}/`} title={`${issue.identifier}: ${issue.title} — ${formatDate(issue.dueDate)}`}><span class="sr-only">{issue.identifier}</span></a>
+            ))}
+          </div>
+        </article>
+      ))}
+    </div>
+  </div>
+  <script is:inline type="application/json" data-timeline-data set:html={payload}></script>
+</section>
+
+<script>
+  interface TimelineProject { id: string; start: string | null; end: string | null }
+  interface TimelineIssue { id: string; projectId: string; due: string | null }
+  interface TimelineRelation { sourceId: string; targetId: string }
+  interface TimelineData { projects: TimelineProject[]; issues: TimelineIssue[]; relations: TimelineRelation[] }
+  const DAY = 86_400_000;
+  function drawTimeline(root: HTMLElement) {
+    const dataNode = root.querySelector<HTMLScriptElement>("[data-timeline-data]");
+    const data = JSON.parse(dataNode?.textContent || "{}") as TimelineData;
+    const dates = [
+      ...data.projects.flatMap((project) => [project.start, project.end]),
+      ...data.issues.map((issue) => issue.due),
+    ].filter((date): date is string => Boolean(date)).map((date) => new Date(`${date}T00:00:00Z`).getTime());
+    if (!dates.length) return;
+    const padding = 14 * DAY;
+    const min = Math.min(...dates) - padding;
+    const max = Math.max(...dates) + padding;
+    const span = Math.max(max - min, DAY);
+    const scale = root.querySelector<HTMLSelectElement>("[data-scale]")?.value ?? "comfortable";
+    const width = scale === "compact" ? 720 : scale === "expanded" ? 1600 : 1100;
+    const canvas = root.querySelector<HTMLElement>("[data-timeline-canvas]");
+    if (!canvas) return;
+    canvas.style.setProperty("--track-width", `${width}px`);
+    const percent = (date: string) => ((new Date(`${date}T00:00:00Z`).getTime() - min) / span) * 100;
+    root.querySelectorAll<HTMLElement>("[data-start][data-end]").forEach((bar) => {
+      const start = percent(bar.dataset.start ?? "");
+      const end = percent(bar.dataset.end ?? "");
+      bar.style.left = `${start}%`;
+      bar.style.width = `${Math.max(end - start, 0.8)}%`;
+    });
+    root.querySelectorAll<HTMLElement>("[data-date]").forEach((marker) => {
+      marker.style.left = `${percent(marker.dataset.date ?? "")}%`;
+    });
+    requestAnimationFrame(() => drawArrows(root, data.relations));
+  }
+  function drawArrows(root: HTMLElement, relations: TimelineRelation[]) {
+    const svg = root.querySelector<SVGSVGElement>("[data-timeline-arrows]");
+    const canvas = root.querySelector<HTMLElement>("[data-timeline-canvas]");
+    if (!svg || !canvas) return;
+    const box = canvas.getBoundingClientRect();
+    svg.setAttribute("viewBox", `0 0 ${box.width} ${box.height}`);
+    svg.replaceChildren();
+    for (const relation of relations) {
+      const source = root.querySelector<HTMLElement>(`[data-issue-marker="${CSS.escape(relation.sourceId)}"]`);
+      const target = root.querySelector<HTMLElement>(`[data-issue-marker="${CSS.escape(relation.targetId)}"]`);
+      if (!source || !target) continue;
+      const a = source.getBoundingClientRect();
+      const b = target.getBoundingClientRect();
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      const x1 = a.left - box.left + a.width / 2;
+      const y1 = a.top - box.top + a.height / 2;
+      const x2 = b.left - box.left + b.width / 2;
+      const y2 = b.top - box.top + b.height / 2;
+      line.setAttribute("d", `M ${x1} ${y1} C ${x1 + 28} ${y1}, ${x2 - 28} ${y2}, ${x2} ${y2}`);
+      line.setAttribute("class", "dependency-arrow");
+      svg.append(line);
+    }
+  }
+  document.querySelectorAll<HTMLElement>("[data-timeline]").forEach((root) => {
+    drawTimeline(root);
+    const scale = root.querySelector<HTMLSelectElement>("[data-scale]");
+    const statusFilter = root.querySelector<HTMLSelectElement>("[data-status-filter]");
+    scale?.addEventListener("change", () => drawTimeline(root));
+    statusFilter?.addEventListener("change", () => {
+      const value = statusFilter.value;
+      root.querySelectorAll<HTMLElement>("[data-project-row]").forEach((row) => {
+        row.hidden = Boolean(value && row.dataset.status !== value);
+      });
+      drawTimeline(root);
+    });
+    window.addEventListener("resize", () => drawTimeline(root), { passive: true });
+  });
+</script>

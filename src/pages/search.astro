@@ -1,0 +1,45 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import { readSnapshot } from "../lib/snapshot";
+import { serializeForScript } from "../lib/view";
+const snapshot = await readSnapshot();
+const items = [
+  ...Object.values(snapshot.projects).map((project) => ({ type: "Project", id: project.id, identifier: "", title: project.name, summary: project.summary, status: project.status.name, href: `/projects/${project.id}/` })),
+  ...Object.values(snapshot.issues).map((issue) => ({ type: "Issue", id: issue.id, identifier: issue.identifier, title: issue.title, summary: issue.descriptionHtml.replace(/<[^>]+>/g, " "), status: issue.state.name, href: `/issues/${issue.id}/` })),
+];
+const searchData = serializeForScript(items);
+---
+<BaseLayout title={`Search · ${snapshot.initiative.name}`} generatedAt={snapshot.generatedAt}>
+  <header class="page-header"><span class="eyebrow">Find work</span><h1>Search</h1><p>Search titles, identifiers, descriptions, and statuses in this snapshot.</p></header>
+  <section class="search-shell" data-search>
+    <label class="search-box"><span class="sr-only">Search initiative</span><input type="search" placeholder="Try an issue ID, title, or status…" autocomplete="off" data-search-input /></label>
+    <div class="search-summary" aria-live="polite" data-search-summary>{items.length} items</div>
+    <ol class="search-results" data-search-results></ol>
+    <script is:inline type="application/json" data-search-data set:html={searchData}></script>
+  </section>
+</BaseLayout>
+<script>
+  interface SearchItem { type: string; identifier: string; title: string; summary: string; status: string; href: string }
+  document.querySelectorAll<HTMLElement>("[data-search]").forEach((root) => {
+    const dataNode = root.querySelector<HTMLScriptElement>("[data-search-data]");
+    const items = JSON.parse(dataNode?.textContent || "[]") as SearchItem[];
+    const input = root.querySelector<HTMLInputElement>("[data-search-input]");
+    const results = root.querySelector<HTMLOListElement>("[data-search-results]");
+    const summary = root.querySelector<HTMLElement>("[data-search-summary]");
+    if (!input || !results || !summary) return;
+    const render = () => {
+      const terms = input.value.toLowerCase().trim().split(/\s+/).filter(Boolean);
+      const matches = items.filter((item) => terms.every((term) => `${item.identifier} ${item.title} ${item.summary} ${item.status}`.toLowerCase().includes(term))).slice(0, 100);
+      results.replaceChildren(...matches.map((item) => {
+        const li = document.createElement("li");
+        const a = document.createElement("a"); a.href = item.href;
+        const meta = document.createElement("span"); meta.className = "eyebrow"; meta.textContent = `${item.type}${item.identifier ? ` · ${item.identifier}` : ""}`;
+        const title = document.createElement("strong"); title.textContent = item.title;
+        const status = document.createElement("span"); status.textContent = item.status;
+        a.append(meta, title, status); li.append(a); return li;
+      }));
+      summary.textContent = `${matches.length}${matches.length === 100 ? "+" : ""} matching item${matches.length === 1 ? "" : "s"}`;
+    };
+    input.addEventListener("input", render); render();
+  });
+</script>

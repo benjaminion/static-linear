@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-31T12:00:00.000Z",
+  "source": {
+    "initiativeId": "initiative-demo",
+    "workspaceUrl": "https://linear.app/example"
+  },
+  "initiative": {
+    "id": "initiative-demo",
+    "name": "Public launch programme",
+    "url": "https://linear.app/example/initiative/public-launch",
+    "summary": "A representative local snapshot used to verify the static build.",
+    "descriptionHtml": "<p>Coordinate the projects required for a reliable public launch.</p>",
+    "status": "Active",
+    "health": "onTrack",
+    "targetDate": "2026-11-30",
+    "projectIds": ["project-alpha"],
+    "latestUpdate": { "id": "initiative-update-demo", "bodyHtml": "<p>Discovery is complete and delivery is on track.</p>", "createdAt": "2026-07-29T10:00:00.000Z", "health": "onTrack", "user": { "id": "user-demo", "name": "Project Lead" } }
+  },
+  "projects": {
+    "project-alpha": {
+      "id": "project-alpha",
+      "name": "Foundation",
+      "slugId": "foundation-demo",
+      "url": "https://linear.app/example/project/foundation-demo",
+      "summary": "Build the foundation for launch.",
+      "descriptionHtml": "<p>The first delivery stream.</p>",
+      "status": { "name": "In Progress", "type": "started", "color": "#2a756a" },
+      "health": "onTrack",
+      "startDate": "2026-08-01",
+      "targetDate": "2026-10-31",
+      "completedAt": null,
+      "canceledAt": null,
+      "lead": { "id": "user-demo", "name": "Project Lead" },
+      "issueIds": ["issue-one", "issue-two"],
+      "milestones": [
+        { "id": "milestone-demo", "name": "Public beta", "descriptionHtml": "<p>Ready for beta users.</p>", "targetDate": "2026-09-30" }
+      ],
+      "latestUpdate": { "id": "project-update-demo", "bodyHtml": "<p>The foundation work has started.</p>", "createdAt": "2026-07-28T10:00:00.000Z", "health": "onTrack", "user": { "id": "user-demo", "name": "Project Lead" } }
+    }
+  },
+  "issues": {
+    "issue-one": {
+      "id": "issue-one",
+      "identifier": "DEMO-1",
+      "title": "Define the public contract",
+      "url": "https://linear.app/example/issue/DEMO-1",
+      "projectId": "project-alpha",
+      "parentId": null,
+      "childIds": ["issue-two"],
+      "descriptionHtml": "<p>Write down what the first release guarantees.</p>",
+      "state": { "name": "In Progress", "type": "started", "color": "#2a756a" },
+      "priority": 2,
+      "priorityLabel": "High",
+      "estimate": 3,
+      "assignee": { "id": "user-demo", "name": "Project Lead" },
+      "labels": [{ "id": "label-demo", "name": "Planning", "color": "#ef6a47" }],
+      "dueDate": "2026-08-31",
+      "createdAt": "2026-07-01T09:00:00.000Z",
+      "updatedAt": "2026-07-30T12:00:00.000Z",
+      "completedAt": null,
+      "canceledAt": null,
+      "archivedAt": null,
+      "comments": [{ "id": "comment-demo", "bodyHtml": "<p>The draft is ready for review.</p>", "createdAt": "2026-07-28T09:00:00.000Z", "updatedAt": "2026-07-28T09:00:00.000Z", "user": { "id": "user-demo", "name": "Project Lead" } }]
+    },
+    "issue-two": {
+      "id": "issue-two",
+      "identifier": "DEMO-2",
+      "title": "Publish the reference implementation",
+      "url": "https://linear.app/example/issue/DEMO-2",
+      "projectId": "project-alpha",
+      "parentId": "issue-one",
+      "childIds": [],
+      "descriptionHtml": "<p>Ship an implementation of the contract.</p>",
+      "state": { "name": "Planned", "type": "unstarted", "color": "#777777" },
+      "priority": 3,
+      "priorityLabel": "Medium",
+      "estimate": 5,
+      "assignee": null,
+      "labels": [],
+      "dueDate": "2026-09-15",
+      "createdAt": "2026-07-02T09:00:00.000Z",
+      "updatedAt": "2026-07-29T12:00:00.000Z",
+      "completedAt": null,
+      "canceledAt": null,
+      "archivedAt": null,
+      "comments": []
+    }
+  },
+  "relations": [
+    { "id": "relation-demo", "type": "blocks", "sourceId": "issue-one", "targetId": "issue-two", "boundaryId": null },
+    { "id": "relation-boundary", "type": "blocks", "sourceId": "boundary:0123456789ab", "targetId": "issue-one", "boundaryId": "boundary:0123456789ab" }
+  ],
+  "boundaries": {
+    "boundary:0123456789ab": { "id": "boundary:0123456789ab", "label": "External dependency" }
+  }
+}

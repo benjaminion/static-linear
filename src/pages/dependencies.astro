@@ -1,0 +1,24 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import DependencyGraph from "../components/DependencyGraph.astro";
+import { readSnapshot } from "../lib/snapshot";
+import { blockingRelations, issueHref } from "../lib/view";
+const snapshot = await readSnapshot();
+const relations = blockingRelations(snapshot);
+const label = (id: string) => snapshot.issues[id]?.identifier ?? snapshot.boundaries[id]?.label ?? "Unknown";
+---
+<BaseLayout title={`Dependencies · ${snapshot.initiative.name}`} generatedAt={snapshot.generatedAt}>
+  <header class="page-header"><span class="eyebrow">Flow of work</span><h1>Dependencies</h1><p>An arrow points from the blocking issue to the issue it blocks. External work is intentionally anonymized.</p></header>
+  <DependencyGraph snapshot={snapshot} />
+  <section class="content-section">
+    <div class="section-heading"><div><span class="eyebrow">All relationships</span><h2>Blocking table</h2></div><span>{relations.length} total</span></div>
+    <div class="table-scroll"><table><thead><tr><th>Blocker</th><th></th><th>Blocked issue</th></tr></thead><tbody>
+      {relations.map((relation) => <tr>
+        <td>{snapshot.issues[relation.sourceId] ? <a href={issueHref(snapshot.issues[relation.sourceId])}>{label(relation.sourceId)} — {snapshot.issues[relation.sourceId].title}</a> : label(relation.sourceId)}</td>
+        <td aria-label="blocks">→</td>
+        <td>{snapshot.issues[relation.targetId] ? <a href={issueHref(snapshot.issues[relation.targetId])}>{label(relation.targetId)} — {snapshot.issues[relation.targetId].title}</a> : label(relation.targetId)}</td>
+      </tr>)}
+    </tbody></table></div>
+  </section>
+</BaseLayout>
+

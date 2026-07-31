@@ -1,0 +1,45 @@
+---
+import "../styles/global.css";
+
+interface Props {
+  title: string;
+  description?: string;
+  generatedAt?: string;
+}
+
+const { title, description = "A public view of work tracked in Linear", generatedAt } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="description" content={description} />
+    <meta name="generator" content={Astro.generator} />
+    <title>{title}</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="Initiative overview">
+        <span class="brand-mark">L</span>
+        <span>Initiative atlas</span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="/">Overview</a>
+        <a href="/timeline/">Timeline</a>
+        <a href="/dependencies/">Dependencies</a>
+        <a href="/search/">Search</a>
+      </nav>
+    </header>
+    <main id="content">
+      <slot />
+    </main>
+    <footer class="site-footer">
+      <span>Static snapshot of Linear planning data.</span>
+      {generatedAt && <span>Generated <time datetime={generatedAt}>{new Date(generatedAt).toLocaleString("en-GB")}</time></span>}
+    </footer>
+  </body>
+</html>
+

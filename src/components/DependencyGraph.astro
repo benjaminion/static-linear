@@ -1,0 +1,105 @@
+---
+import type { PublicSnapshot } from "../lib/schema";
+import { blockingRelations, dependencyCycles, issueHref, serializeForScript } from "../lib/view";
+
+interface Props { snapshot: PublicSnapshot }
+const { snapshot } = Astro.props;
+const relations = blockingRelations(snapshot);
+const endpointIds = [...new Set(relations.flatMap((relation) => [relation.sourceId, relation.targetId]))];
+const nodes = endpointIds.map((id) => ({
+  id,
+  label: snapshot.issues[id]?.identifier ?? snapshot.boundaries[id]?.label ?? "Unknown",
+  title: snapshot.issues[id]?.title ?? "Dependency outside this initiative",
+  href: snapshot.issues[id] ? issueHref(snapshot.issues[id]) : null,
+  projectId: snapshot.issues[id]?.projectId ?? null,
+}));
+const graphData = serializeForScript({ nodes, edges: relations.map((relation) => ({ source: relation.sourceId, target: relation.targetId })) });
+const cycles = dependencyCycles(snapshot);
+---
+
+{cycles.length > 0 && (
+  <aside class="alert" role="alert">
+    <strong>{cycles.length} dependency cycle{cycles.length === 1 ? "" : "s"} detected.</strong>
+    Review the relationships in the table below.
+  </aside>
+)}
+
+<div class="graph-shell" data-graph>
+  <div class="toolbar">
+    <label>Project
+      <select data-graph-project>
+        <option value="">All projects</option>
+        {snapshot.initiative.projectIds.map((id) => snapshot.projects[id]).filter(Boolean).map((project) => <option value={project.id}>{project.name}</option>)}
+      </select>
+    </label>
+    <button class="button button--secondary" type="button" data-reset-graph>Reset view</button>
+  </div>
+  <svg class="dependency-graph" viewBox="0 0 1000 600" role="img" aria-label="Blocking issue dependency graph" data-graph-svg>
+    <defs>
+      <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z"></path></marker>
+    </defs>
+    <g data-edges></g>
+    <g data-nodes></g>
+  </svg>
+  {relations.length === 0 && <p class="empty-state">No blocking relationships were found in this initiative.</p>}
+  <script is:inline type="application/json" data-graph-data set:html={graphData}></script>
+</div>
+
+<script>
+  interface GraphNode { id: string; label: string; title: string; href: string | null; projectId: string | null }
+  interface GraphEdge { source: string; target: string }
+  interface GraphData { nodes: GraphNode[]; edges: GraphEdge[] }
+  function renderGraph(root: HTMLElement) {
+    const dataNode = root.querySelector<HTMLScriptElement>("[data-graph-data]");
+    const all = JSON.parse(dataNode?.textContent || "{}") as GraphData;
+    const project = root.querySelector<HTMLSelectElement>("[data-graph-project]")?.value ?? "";
+    const visibleIds = new Set<string>(
+      all.nodes.filter((node) => !project || node.projectId === project).map((node) => node.id),
+    );
+    const edges = all.edges.filter((edge) => visibleIds.has(edge.source) || visibleIds.has(edge.target));
+    for (const edge of edges) { visibleIds.add(edge.source); visibleIds.add(edge.target); }
+    const nodes = all.nodes.filter((node) => visibleIds.has(node.id));
+    const svg = root.querySelector<SVGSVGElement>("[data-graph-svg]");
+    const nodeLayer = svg?.querySelector<SVGGElement>("[data-nodes]");
+    const edgeLayer = svg?.querySelector<SVGGElement>("[data-edges]");
+    if (!svg || !nodeLayer || !edgeLayer) return;
+    nodeLayer.replaceChildren(); edgeLayer.replaceChildren();
+    const columns = Math.max(1, Math.ceil(Math.sqrt(nodes.length * 1.7)));
+    const positions = new Map<string, { x: number; y: number }>();
+    nodes.forEach((node, index) => {
+      const x = 90 + (index % columns) * (820 / Math.max(columns - 1, 1));
+      const y = 75 + Math.floor(index / columns) * 120;
+      positions.set(node.id, { x, y });
+      const link = document.createElementNS("http://www.w3.org/2000/svg", "a");
+      if (node.href) link.setAttribute("href", node.href);
+      const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      circle.setAttribute("cx", String(x)); circle.setAttribute("cy", String(y)); circle.setAttribute("r", "28");
+      circle.setAttribute("class", node.href ? "graph-node" : "graph-node graph-node--boundary");
+      const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      text.setAttribute("x", String(x)); text.setAttribute("y", String(y + 4)); text.setAttribute("text-anchor", "middle");
+      text.textContent = node.label.length > 16 ? `${node.label.slice(0, 14)}…` : node.label;
+      const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+      title.textContent = `${node.label}: ${node.title}`;
+      link.append(circle, text, title); nodeLayer.append(link);
+    });
+    edges.forEach((edge) => {
+      const a = positions.get(edge.source), b = positions.get(edge.target);
+      if (!a || !b) return;
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("x1", String(a.x)); line.setAttribute("y1", String(a.y)); line.setAttribute("x2", String(b.x)); line.setAttribute("y2", String(b.y));
+      line.setAttribute("class", "graph-edge"); line.setAttribute("marker-end", "url(#arrowhead)");
+      edgeLayer.append(line);
+    });
+    const rows = Math.ceil(nodes.length / columns);
+    svg.setAttribute("viewBox", `0 0 1000 ${Math.max(220, 40 + rows * 120)}`);
+  }
+  document.querySelectorAll<HTMLElement>("[data-graph]").forEach((root) => {
+    renderGraph(root);
+    const projectFilter = root.querySelector<HTMLSelectElement>("[data-graph-project]");
+    projectFilter?.addEventListener("change", () => renderGraph(root));
+    root.querySelector<HTMLButtonElement>("[data-reset-graph]")?.addEventListener("click", () => {
+      if (projectFilter) projectFilter.value = "";
+      renderGraph(root);
+    });
+  });
+</script>

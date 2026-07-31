@@ -1,0 +1,19 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import Timeline from "../components/Timeline.astro";
+import { readSnapshot } from "../lib/snapshot";
+import { formatDate, projectHref } from "../lib/view";
+const snapshot = await readSnapshot();
+const projects = snapshot.initiative.projectIds.map((id) => snapshot.projects[id]).filter(Boolean);
+---
+<BaseLayout title={`Timeline · ${snapshot.initiative.name}`} generatedAt={snapshot.generatedAt}>
+  <header class="page-header"><span class="eyebrow">Roadmap</span><h1>Timeline</h1><p>Project ranges, milestones, issue due dates, and dated blocking relationships.</p></header>
+  <Timeline snapshot={snapshot} />
+  <section class="content-section">
+    <div class="section-heading"><div><span class="eyebrow">Accessible view</span><h2>Schedule table</h2></div></div>
+    <div class="table-scroll"><table><thead><tr><th>Project</th><th>Status</th><th>Start</th><th>Target</th><th>Dated issues</th></tr></thead><tbody>
+      {projects.map((project) => <tr><th><a href={projectHref(project)}>{project.name}</a></th><td>{project.status.name}</td><td>{formatDate(project.startDate)}</td><td>{formatDate(project.targetDate)}</td><td>{project.issueIds.filter((id) => snapshot.issues[id]?.dueDate).length}</td></tr>)}
+    </tbody></table></div>
+  </section>
+</BaseLayout>
+

@@ -1,0 +1,42 @@
+---
+import type { GetStaticPaths } from "astro";
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import IssueTree from "../../components/IssueTree.astro";
+import { readSnapshot } from "../../lib/snapshot";
+import { compareIssues, formatDate, formatDateTime, issueHref, projectHref, statusClass } from "../../lib/view";
+
+export const getStaticPaths = (async () => {
+  const snapshot = await readSnapshot();
+  return Object.values(snapshot.issues).map((issue) => ({ params: { id: issue.id }, props: { issue, snapshot } }));
+}) satisfies GetStaticPaths;
+
+const { issue, snapshot } = Astro.props;
+const project = snapshot.projects[issue.projectId];
+const relations = snapshot.relations.filter((relation: any) => relation.sourceId === issue.id || relation.targetId === issue.id);
+const relationLabel = (relation: any) => {
+  const outgoing = relation.sourceId === issue.id;
+  if (relation.type === "blocks") return outgoing ? "Blocks" : "Blocked by";
+  return relation.type === "duplicate" ? "Duplicates" : "Related";
+};
+const otherEndpoint = (relation: any) => relation.sourceId === issue.id ? relation.targetId : relation.sourceId;
+---
+<BaseLayout title={`${issue.identifier}: ${issue.title}`} description={`${issue.identifier} in ${project.name}`} generatedAt={snapshot.generatedAt}>
+  <header class="page-header issue-header">
+    <a class="back-link" href={projectHref(project)}>← {project.name}</a>
+    <div class="hero-heading"><div><span class="eyebrow">{issue.identifier}</span><h1>{issue.title}</h1></div><a class="button" href={issue.url} target="_blank" rel="noopener noreferrer">Open in Linear ↗</a></div>
+    <div class="hero-meta"><span class={statusClass(issue.state.type)}>{issue.state.name}</span><span>{issue.priorityLabel}</span>{issue.assignee && <span>{issue.assignee.name}</span>}<span>Due: {formatDate(issue.dueDate)}</span></div>
+  </header>
+  <div class="detail-grid">
+    <article class="detail-main">
+      <section class="content-section prose"><div class="section-heading"><h2>Description</h2></div>{issue.descriptionHtml ? <div set:html={issue.descriptionHtml}></div> : <p class="empty-state">No description.</p>}</section>
+      {issue.childIds.length > 0 && <section class="content-section"><div class="section-heading"><h2>Sub-issues</h2></div><IssueTree issues={issue.childIds.map((id: string) => snapshot.issues[id]).filter(Boolean).sort(compareIssues)} snapshot={snapshot} /></section>}
+      <section class="content-section"><div class="section-heading"><div><span class="eyebrow">Discussion</span><h2>Comments</h2></div><span>{issue.comments.length}</span></div><div class="comments">{issue.comments.length ? issue.comments.map((comment: any) => <article class="comment"><header><strong>{comment.user?.name ?? "Deleted user"}</strong><time datetime={comment.createdAt}>{formatDateTime(comment.createdAt)}</time></header><div class="prose compact" set:html={comment.bodyHtml}></div></article>) : <p class="empty-state">No comments.</p>}</div></section>
+    </article>
+    <aside class="detail-sidebar">
+      <section class="side-card"><h2>Details</h2><dl><div><dt>Project</dt><dd><a href={projectHref(project)}>{project.name}</a></dd></div><div><dt>Created</dt><dd>{formatDate(issue.createdAt)}</dd></div><div><dt>Updated</dt><dd>{formatDate(issue.updatedAt)}</dd></div><div><dt>Estimate</dt><dd>{issue.estimate ?? "Not set"}</dd></div>{issue.parentId && <div><dt>Parent</dt><dd><a href={issueHref(snapshot.issues[issue.parentId])}>{snapshot.issues[issue.parentId].identifier}</a></dd></div>}</dl></section>
+      {issue.labels.length > 0 && <section class="side-card"><h2>Labels</h2><div class="tag-list">{issue.labels.map((label: any) => <span>{label.name}</span>)}</div></section>}
+      <section class="side-card"><h2>Relations</h2>{relations.length ? <ul class="relation-list">{relations.map((relation: any) => { const id = otherEndpoint(relation); const other = snapshot.issues[id]; return <li><span>{relationLabel(relation)}</span>{other ? <a href={issueHref(other)}>{other.identifier}</a> : <strong>External dependency</strong>}</li>; })}</ul> : <p class="empty-state">No relations.</p>}</section>
+    </aside>
+  </div>
+</BaseLayout>
+
