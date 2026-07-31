@@ -1,7 +1,6 @@
 ---
 import type { GetStaticPaths } from "astro";
 import BaseLayout from "../../layouts/BaseLayout.astro";
-import Metric from "../../components/Metric.astro";
 import IssueTree from "../../components/IssueTree.astro";
 import { readSnapshot } from "../../lib/snapshot";
 import { formatDate, formatDateTime, issueRoots, statusClass } from "../../lib/view";
@@ -13,7 +12,6 @@ export const getStaticPaths = (async () => {
 
 const { project, snapshot } = Astro.props;
 const projectIssues = project.issueIds.map((id: string) => snapshot.issues[id]).filter(Boolean);
-const completed = projectIssues.filter((issue: any) => ["completed", "canceled"].includes(issue.state.type)).length;
 const roots = issueRoots(project, snapshot);
 ---
 <BaseLayout title={`${project.name} · ${snapshot.initiative.name}`} description={project.summary} generatedAt={snapshot.generatedAt}>
@@ -22,7 +20,6 @@ const roots = issueRoots(project, snapshot);
     <div class="hero-heading"><div><span class="eyebrow">Project</span><h1>{project.name}</h1>{project.summary && <p>{project.summary}</p>}</div><a class="button" href={project.url} target="_blank" rel="noopener noreferrer">Open in Linear ↗</a></div>
     <div class="hero-meta"><span class={statusClass(project.status.type)}>{project.status.name}</span><span>{formatDate(project.startDate)} → {formatDate(project.targetDate)}</span>{project.lead && <span>Lead: {project.lead.name}</span>}</div>
   </header>
-  <section class="metric-grid metric-grid--three"><Metric label="Issues" value={projectIssues.length} /><Metric label="Completed" value={completed} /><Metric label="Milestones" value={project.milestones.length} /></section>
   {project.descriptionHtml && <section class="content-section prose"><div class="section-heading"><h2>Overview</h2></div><div set:html={project.descriptionHtml}></div></section>}
   {project.latestUpdate && <section class="content-section update-card"><div class="section-heading"><div><span class="eyebrow">Latest update</span><h2>Project status</h2></div><time datetime={project.latestUpdate.createdAt}>{formatDateTime(project.latestUpdate.createdAt)}</time></div><div class="prose" set:html={project.latestUpdate.bodyHtml}></div><p class="update-author">{project.latestUpdate.user.name} · {project.latestUpdate.health}</p></section>}
   {project.milestones.length > 0 && <section class="content-section"><div class="section-heading"><h2>Milestones</h2></div><ol class="milestone-list">{project.milestones.map((milestone: any) => <li><span class="milestone-dot"></span><div><strong>{milestone.name}</strong><time datetime={milestone.targetDate || undefined}>{formatDate(milestone.targetDate)}</time>{milestone.descriptionHtml && <div class="prose compact" set:html={milestone.descriptionHtml}></div>}</div></li>)}</ol></section>}

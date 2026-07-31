@@ -9,6 +9,7 @@
     "build:cached": "LINEAR_SKIP_SYNC=1 astro build",
     "preview": "astro preview",
     "sync": "tsx scripts/sync.ts",
+    "pull:initiative-overview": "tsx scripts/pull-initiative-overview.ts",
     "check": "astro check",
     "test": "vitest run",
     "test:watch": "vitest"

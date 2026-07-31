@@ -1,6 +1,7 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
 import Metric from "../components/Metric.astro";
+import { readLocalMarkdown } from "../lib/local-content";
 import { readSnapshot } from "../lib/snapshot";
 import { formatDate, formatDateTime, projectHref, statusClass } from "../lib/view";
 
@@ -9,9 +10,10 @@ const projects = snapshot.initiative.projectIds.map((id) => snapshot.projects[id
 const issues = Object.values(snapshot.issues);
 const completed = issues.filter((issue) => ["completed", "canceled"].includes(issue.state.type)).length;
 const blockedIds = new Set(snapshot.relations.filter((relation) => relation.type === "blocks").map((relation) => relation.targetId));
+const initiativeOverview = await readLocalMarkdown("content/initiative-overview.md");
 ---
 
-<BaseLayout title={`${snapshot.initiative.name} · Initiative atlas`} description={snapshot.initiative.summary} generatedAt={snapshot.generatedAt}>
+<BaseLayout title={`${snapshot.initiative.name} · Overview`} description={snapshot.initiative.summary} generatedAt={snapshot.generatedAt}>
   <section class="hero">
     <div class="eyebrow">Linear initiative</div>
     <div class="hero-heading">
@@ -35,10 +37,10 @@ const blockedIds = new Set(snapshot.relations.filter((relation) => relation.type
     <Metric label="Blocked" value={blockedIds.size} note={`${snapshot.boundaries && Object.keys(snapshot.boundaries).length} external dependencies`} />
   </section>
 
-  {snapshot.initiative.descriptionHtml && (
+  {initiativeOverview && (
     <section class="content-section prose">
       <div class="section-heading"><div><span class="eyebrow">Context</span><h2>About this initiative</h2></div></div>
-      <div set:html={snapshot.initiative.descriptionHtml}></div>
+      <div set:html={initiativeOverview}></div>
     </section>
   )}
 

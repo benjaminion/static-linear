@@ -1,3 +1,14 @@
+export const INITIATIVE_BODY_QUERY = /* GraphQL */ `
+  query InitiativeBody($id: String!) {
+    initiative(id: $id) {
+      id
+      name
+      description
+      content
+    }
+  }
+`;
+
 export const INITIATIVE_QUERY = /* GraphQL */ `
   query PublicInitiative($id: String!, $after: String) {
     initiative(id: $id) {
@@ -5,7 +16,6 @@ export const INITIATIVE_QUERY = /* GraphQL */ `
       name
       url
       description
-      content
       status
       health
       targetDate

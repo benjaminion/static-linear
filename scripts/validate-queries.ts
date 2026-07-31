@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import { buildSchema, parse, validate } from "graphql";
 import {
+  INITIATIVE_BODY_QUERY,
   INITIATIVE_QUERY,
   ISSUE_DETAIL_PAGE_QUERY,
   ISSUES_QUERY,
@@ -14,6 +15,7 @@ if (!schemaPath) {
 
 const schema = buildSchema(await fs.readFile(schemaPath, "utf8"));
 const documents = {
+  INITIATIVE_BODY_QUERY,
   INITIATIVE_QUERY,
   PROJECT_MILESTONES_QUERY,
   ISSUES_QUERY,

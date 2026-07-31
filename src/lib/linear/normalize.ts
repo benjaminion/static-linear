@@ -41,7 +41,7 @@ export interface RawIssue {
 }
 export interface RawInitiative {
   id: string; name: string; url: string; description?: string | null;
-  content?: string | null; status: string; health?: string | null;
+  status: string; health?: string | null;
   targetDate?: string | null; organization?: { urlKey: string } | null;
   lastUpdate?: RawStatusUpdate | null;
 }
@@ -153,7 +153,7 @@ export function normalizeSnapshot(input: {
       name: input.initiative.name,
       url: input.initiative.url,
       summary: input.initiative.description ?? "",
-      descriptionHtml: renderPublicMarkdown(input.initiative.content || input.initiative.description),
+      descriptionHtml: "",
       status: input.initiative.status,
       health: input.initiative.health ?? null,
       targetDate: input.initiative.targetDate ?? null,

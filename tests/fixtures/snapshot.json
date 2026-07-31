@@ -10,7 +10,7 @@
     "name": "Public launch programme",
     "url": "https://linear.app/example/initiative/public-launch",
     "summary": "A representative local snapshot used to verify the static build.",
-    "descriptionHtml": "<p>Coordinate the projects required for a reliable public launch.</p>",
+    "descriptionHtml": "",
     "status": "Active",
     "health": "onTrack",
     "targetDate": "2026-11-30",

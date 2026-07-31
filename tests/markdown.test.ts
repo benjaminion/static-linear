@@ -31,6 +31,27 @@ describe("renderPublicMarkdown", () => {
     expect(html).toContain('rel="noopener noreferrer"');
   });
 
+  it("renders a star-suffixed Linear link as plain text", () => {
+    const html = renderPublicMarkdown("Read [internal planning*](https://example.com/private).");
+    expect(html).toContain("Read internal planning.");
+    expect(html).not.toContain("internal planning*");
+    expect(html).not.toContain("https://example.com/private");
+  });
+
+  it("preserves formatting inside a star-suffixed link", () => {
+    const html = renderPublicMarkdown('<a href="https://example.com"><strong>Internal*</strong></a>');
+    expect(html).toContain("<strong>Internal</strong>");
+    expect(html).not.toContain("<a");
+  });
+
+  it("can retain star-suffixed links for local Markdown", () => {
+    const html = renderPublicMarkdown("[public footnote*](https://example.com)", {
+      stripStarredLinks: false,
+    });
+    expect(html).toContain("public footnote*");
+    expect(html).toContain('href="https://example.com"');
+  });
+
   it("redacts email addresses from public prose", () => {
     const html = renderPublicMarkdown("Contact private.person@example.com for access.");
     expect(html).toContain("[redacted email]");

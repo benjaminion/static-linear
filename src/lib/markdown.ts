@@ -5,8 +5,16 @@ const PRIVATE_LINEAR_ASSET = /https:\/\/(?:uploads|public)\.linear\.app\/[\w./?%
 const PRIVATE_LINEAR_IMAGE = /!\[[^\]]*\]\(https:\/\/(?:uploads|public)\.linear\.app\/[^)]+\)/gi;
 const UNSAFE_PROTOCOL = /\b(?:javascript|vbscript|data):/gi;
 const EMAIL_ADDRESS = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
+const HTML_LINK = /<a\b[^>]*>([\s\S]*?)<\/a>/gi;
 
-export function renderPublicMarkdown(markdown: string | null | undefined): string {
+interface MarkdownOptions {
+  stripStarredLinks?: boolean;
+}
+
+export function renderPublicMarkdown(
+  markdown: string | null | undefined,
+  options: MarkdownOptions = {},
+): string {
   if (!markdown) return "";
 
   const withoutPrivateAssets = markdown
@@ -21,7 +29,7 @@ export function renderPublicMarkdown(markdown: string | null | undefined): strin
     breaks: false,
   });
 
-  return sanitizeHtml(raw, {
+  const sanitized = sanitizeHtml(raw, {
     allowedTags: [
       "p", "br", "strong", "em", "del", "code", "pre", "blockquote",
       "ul", "ol", "li", "h1", "h2", "h3", "h4", "h5", "h6",
@@ -56,4 +64,24 @@ export function renderPublicMarkdown(markdown: string | null | undefined): strin
     },
     exclusiveFilter: (frame) => frame.tag === "img",
   }).replace(/(<span class="private-asset">).*?(<\/span>)/g, "$1Attachment available in Linear$2");
+
+  return options.stripStarredLinks === false
+    ? sanitized
+    : stripLinksMarkedForPlainText(sanitized);
+}
+
+function stripLinksMarkedForPlainText(html: string): string {
+  return html.replace(HTML_LINK, (anchor, innerHtml: string) => {
+    const visibleText = innerHtml
+      .replace(/<[^>]*>/g, "")
+      .replace(/(?:&#42;|&#x2a;|&ast;)/gi, "*")
+      .trimEnd();
+
+    if (!visibleText.endsWith("*")) return anchor;
+
+    const trailingMarkup = "((?:\\s|<\\/[^>]+>)*)$";
+    const literalStar = new RegExp(`\\*${trailingMarkup}`);
+    const encodedStar = new RegExp(`(?:&#42;|&#x2a;|&ast;)${trailingMarkup}`, "i");
+    return innerHtml.replace(literalStar, "$1").replace(encodedStar, "$1");
+  });
 }

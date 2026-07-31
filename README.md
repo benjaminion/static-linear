@@ -10,6 +10,14 @@ Requires Node.js 22 or later.
 2. Set `LINEAR_API_KEY` and the initiative's UUID (`Copy model UUID` in Linear's command menu).
 3. Run `npm install`.
 
+Edit `content/initiative-overview.md` to provide the public copy shown under
+“About this initiative”. This local file replaces the longer initiative body in Linear;
+that Linear field is not fetched or written to the public snapshot.
+
+To seed that file once from the current Linear body, run
+`npm run pull:initiative-overview`. The helper overwrites the placeholder atomically;
+normal builds never fetch this field.
+
 ## Commands
 
 - `npx astro build` — refresh Linear data and generate `dist/`.
