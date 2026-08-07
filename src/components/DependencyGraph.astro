@@ -37,7 +37,7 @@ const cycles = dependencyCycles(snapshot);
   </div>
   <svg class="dependency-graph" viewBox="0 0 1000 600" role="img" aria-label="Blocking issue dependency graph" data-graph-svg>
     <defs>
-      <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z"></path></marker>
+      <marker id="arrowhead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L10,4 L0,8 Z"></path></marker>
     </defs>
     <g data-edges></g>
     <g data-nodes></g>
@@ -86,8 +86,14 @@ const cycles = dependencyCycles(snapshot);
     edges.forEach((edge) => {
       const a = positions.get(edge.source), b = positions.get(edge.target);
       if (!a || !b) return;
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const distance = Math.hypot(dx, dy);
+      if (!distance) return;
+      const nodeRadius = 28;
+      const unitX = dx / distance, unitY = dy / distance;
       const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-      line.setAttribute("x1", String(a.x)); line.setAttribute("y1", String(a.y)); line.setAttribute("x2", String(b.x)); line.setAttribute("y2", String(b.y));
+      line.setAttribute("x1", String(a.x + unitX * nodeRadius)); line.setAttribute("y1", String(a.y + unitY * nodeRadius));
+      line.setAttribute("x2", String(b.x - unitX * (nodeRadius + 1))); line.setAttribute("y2", String(b.y - unitY * (nodeRadius + 1)));
       line.setAttribute("class", "graph-edge"); line.setAttribute("marker-end", "url(#arrowhead)");
       edgeLayer.append(line);
     });
