@@ -1,10 +1,10 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
 import { readSnapshot } from "../lib/snapshot";
-import { serializeForScript } from "../lib/view";
+import { initiativeProjects, serializeForScript } from "../lib/view";
 const snapshot = await readSnapshot();
 const items = [
-  ...Object.values(snapshot.projects).map((project) => ({ type: "Project", id: project.id, identifier: "", title: project.name, summary: project.summary, status: project.status.name, href: `/projects/${project.id}/` })),
+  ...initiativeProjects(snapshot).map((project) => ({ type: "Project", id: project.id, identifier: "", title: project.name, summary: project.summary, status: project.status.name, href: `/projects/${project.id}/` })),
   ...Object.values(snapshot.issues).map((issue) => ({ type: "Issue", id: issue.id, identifier: issue.identifier, title: issue.title, summary: issue.descriptionHtml.replace(/<[^>]+>/g, " "), status: issue.state.name, href: `/issues/${issue.id}/` })),
 ];
 const searchData = serializeForScript(items);

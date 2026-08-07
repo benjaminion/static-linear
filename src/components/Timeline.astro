@@ -1,10 +1,10 @@
 ---
 import type { PublicSnapshot } from "../lib/schema";
-import { formatDate, projectHref, serializeForScript, statusClass } from "../lib/view";
+import { formatDate, initiativeProjects, projectHref, serializeForScript, statusClass } from "../lib/view";
 
 interface Props { snapshot: PublicSnapshot }
 const { snapshot } = Astro.props;
-const projects = snapshot.initiative.projectIds.map((id) => snapshot.projects[id]).filter(Boolean);
+const projects = initiativeProjects(snapshot);
 const datedIssues = Object.values(snapshot.issues).filter((issue) => issue.dueDate);
 const payload = serializeForScript({
   projects: projects.map((project) => ({

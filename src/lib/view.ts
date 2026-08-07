@@ -1,5 +1,7 @@
 import type { PublicIssue, PublicProject, PublicSnapshot } from "./schema";
 
+const projectNameCollator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
+
 export function formatDate(value: string | null | undefined): string {
   if (!value) return "Not set";
   return new Intl.DateTimeFormat("en-GB", {
@@ -26,6 +28,17 @@ export function issueHref(issue: Pick<PublicIssue, "id">): string {
 
 export function projectHref(project: Pick<PublicProject, "id">): string {
   return `/projects/${encodeURIComponent(project.id)}/`;
+}
+
+export function compareProjects(a: PublicProject, b: PublicProject): number {
+  return projectNameCollator.compare(a.name, b.name) || a.id.localeCompare(b.id);
+}
+
+export function initiativeProjects(snapshot: PublicSnapshot): PublicProject[] {
+  return snapshot.initiative.projectIds
+    .map((id) => snapshot.projects[id])
+    .filter((project): project is PublicProject => Boolean(project))
+    .sort(compareProjects);
 }
 
 export function statusClass(type: string): string {

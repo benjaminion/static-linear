@@ -1,9 +1,10 @@
 ---
 import type { PublicSnapshot } from "../lib/schema";
-import { blockingRelations, dependencyCycles, issueHref, serializeForScript } from "../lib/view";
+import { blockingRelations, dependencyCycles, initiativeProjects, issueHref, serializeForScript } from "../lib/view";
 
 interface Props { snapshot: PublicSnapshot }
 const { snapshot } = Astro.props;
+const projects = initiativeProjects(snapshot);
 const relations = blockingRelations(snapshot);
 const endpointIds = [...new Set(relations.flatMap((relation) => [relation.sourceId, relation.targetId]))];
 const nodes = endpointIds.map((id) => ({
@@ -29,7 +30,7 @@ const cycles = dependencyCycles(snapshot);
     <label>Project
       <select data-graph-project>
         <option value="">All projects</option>
-        {snapshot.initiative.projectIds.map((id) => snapshot.projects[id]).filter(Boolean).map((project) => <option value={project.id}>{project.name}</option>)}
+        {projects.map((project) => <option value={project.id}>{project.name}</option>)}
       </select>
     </label>
     <button class="button button--secondary" type="button" data-reset-graph>Reset view</button>
