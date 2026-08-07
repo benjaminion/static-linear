@@ -1,12 +1,13 @@
 ---
 import type { PublicSnapshot } from "../lib/schema";
-import { blockingRelations, dependencyCycles, initiativeProjects, issueHref, serializeForScript } from "../lib/view";
+import { blockingRelations, compareDependencyIssues, dependencyCycles, initiativeProjects, issueHref, serializeForScript } from "../lib/view";
 
 interface Props { snapshot: PublicSnapshot }
 const { snapshot } = Astro.props;
 const projects = initiativeProjects(snapshot);
 const relations = blockingRelations(snapshot);
-const endpointIds = [...new Set(relations.flatMap((relation) => [relation.sourceId, relation.targetId]))];
+const endpointIds = [...new Set(relations.flatMap((relation) => [relation.sourceId, relation.targetId]))]
+  .sort((a, b) => compareDependencyIssues(a, b, snapshot));
 const nodes = endpointIds.map((id) => ({
   id,
   label: snapshot.issues[id]?.identifier ?? snapshot.boundaries[id]?.label ?? "Unknown",
@@ -47,6 +48,8 @@ const cycles = dependencyCycles(snapshot);
 </div>
 
 <script>
+  import { layoutDependencyNodes, routeDependencyEdges } from "../lib/dependency-layout";
+
   interface GraphNode { id: string; label: string; title: string; href: string | null; projectId: string | null }
   interface GraphEdge { source: string; target: string }
   interface GraphData { nodes: GraphNode[]; edges: GraphEdge[] }
@@ -65,11 +68,10 @@ const cycles = dependencyCycles(snapshot);
     const edgeLayer = svg?.querySelector<SVGGElement>("[data-edges]");
     if (!svg || !nodeLayer || !edgeLayer) return;
     nodeLayer.replaceChildren(); edgeLayer.replaceChildren();
-    const columns = Math.max(1, Math.ceil(Math.sqrt(nodes.length * 1.7)));
-    const positions = new Map<string, { x: number; y: number }>();
-    nodes.forEach((node, index) => {
-      const x = 90 + (index % columns) * (820 / Math.max(columns - 1, 1));
-      const y = 75 + Math.floor(index / columns) * 120;
+    const nodeLayout = layoutDependencyNodes(nodes.map((node) => node.id), edges);
+    const positions = new Map(nodeLayout.nodes.map(({ id, x, y }) => [id, { x, y }]));
+    nodes.forEach((node) => {
+      const { x, y } = positions.get(node.id)!;
       positions.set(node.id, { x, y });
       const link = document.createElementNS("http://www.w3.org/2000/svg", "a");
       if (node.href) link.setAttribute("href", node.href);
@@ -83,22 +85,17 @@ const cycles = dependencyCycles(snapshot);
       title.textContent = `${node.label}: ${node.title}`;
       link.append(circle, text, title); nodeLayer.append(link);
     });
-    edges.forEach((edge) => {
-      const a = positions.get(edge.source), b = positions.get(edge.target);
-      if (!a || !b) return;
-      const dx = b.x - a.x, dy = b.y - a.y;
-      const distance = Math.hypot(dx, dy);
-      if (!distance) return;
-      const nodeRadius = 28;
-      const unitX = dx / distance, unitY = dy / distance;
-      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-      line.setAttribute("x1", String(a.x + unitX * nodeRadius)); line.setAttribute("y1", String(a.y + unitY * nodeRadius));
-      line.setAttribute("x2", String(b.x - unitX * (nodeRadius + 1))); line.setAttribute("y2", String(b.y - unitY * (nodeRadius + 1)));
-      line.setAttribute("class", "graph-edge"); line.setAttribute("marker-end", "url(#arrowhead)");
-      edgeLayer.append(line);
+    const layout = routeDependencyEdges(
+      [...positions].map(([id, position]) => ({ id, ...position })),
+      edges,
+    );
+    layout.routes.forEach((route) => {
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", route.d);
+      path.setAttribute("class", "graph-edge"); path.setAttribute("marker-end", "url(#arrowhead)");
+      edgeLayer.append(path);
     });
-    const rows = Math.ceil(nodes.length / columns);
-    svg.setAttribute("viewBox", `0 0 1000 ${Math.max(220, 40 + rows * 120)}`);
+    svg.setAttribute("viewBox", `0 ${layout.minY} ${nodeLayout.width} ${layout.maxY - layout.minY}`);
   }
   document.querySelectorAll<HTMLElement>("[data-graph]").forEach((root) => {
     renderGraph(root);

@@ -114,7 +114,7 @@ p { line-height: 1.55; }
 .graph-node { fill: var(--teal-soft); stroke: var(--teal); stroke-width: 2; }
 .graph-node--boundary { fill: #ece9e2; stroke: #8e887b; stroke-dasharray: 3 3; }
 .dependency-graph text { fill: var(--ink); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 11px; font-weight: 500; pointer-events: none; }
-.graph-edge { stroke: var(--accent); stroke-width: 1.5; opacity: .7; }
+.graph-edge { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; opacity: .7; }
 .dependency-graph marker path { fill: var(--accent); }
 .alert { margin-bottom: .7rem; padding: .7rem .9rem; border-left: 4px solid var(--accent); background: #fff0e9; font-size: .82rem; }
 .empty-state { color: var(--muted); font-style: italic; }

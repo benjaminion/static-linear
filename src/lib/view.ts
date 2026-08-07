@@ -70,6 +70,25 @@ export function blockingRelations(snapshot: PublicSnapshot) {
   return snapshot.relations.filter((relation) => relation.type === "blocks");
 }
 
+export function dependencyIssueDate(issueId: string, snapshot: PublicSnapshot): string | null {
+  const issue = snapshot.issues[issueId];
+  if (!issue) return null;
+  return issue.dueDate ?? snapshot.projects[issue.projectId]?.targetDate ?? null;
+}
+
+export function compareDependencyIssues(aId: string, bId: string, snapshot: PublicSnapshot): number {
+  const aDate = dependencyIssueDate(aId, snapshot);
+  const bDate = dependencyIssueDate(bId, snapshot);
+  if (aDate !== bDate) {
+    if (!aDate) return 1;
+    if (!bDate) return -1;
+    return aDate.localeCompare(bDate);
+  }
+  const aLabel = snapshot.issues[aId]?.identifier ?? snapshot.boundaries[aId]?.label ?? aId;
+  const bLabel = snapshot.issues[bId]?.identifier ?? snapshot.boundaries[bId]?.label ?? bId;
+  return aLabel.localeCompare(bLabel, "en", { numeric: true, sensitivity: "base" });
+}
+
 export function dependencyCycles(snapshot: PublicSnapshot): string[][] {
   const adjacency = new Map<string, string[]>();
   for (const issueId of Object.keys(snapshot.issues)) adjacency.set(issueId, []);

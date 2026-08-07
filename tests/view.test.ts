@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { compareProjects, serializeForScript } from "../src/lib/view";
-import type { PublicProject } from "../src/lib/schema";
+import { compareDependencyIssues, compareProjects, dependencyIssueDate, serializeForScript } from "../src/lib/view";
+import type { PublicProject, PublicSnapshot } from "../src/lib/schema";
 
 function project(name: string): PublicProject {
   return { name, id: name } as PublicProject;
@@ -15,6 +15,34 @@ describe("compareProjects", () => {
       "10 Launch",
       "Alpha",
       "Beta",
+    ]);
+  });
+});
+
+describe("dependency issue ordering", () => {
+  const snapshot = {
+    projects: {
+      alpha: { targetDate: "2026-08-20" },
+      beta: { targetDate: null },
+    },
+    issues: {
+      explicit: { identifier: "ISS-3", projectId: "alpha", dueDate: "2026-08-10" },
+      fallback: { identifier: "ISS-2", projectId: "alpha", dueDate: null },
+      undated: { identifier: "ISS-1", projectId: "beta", dueDate: null },
+    },
+    boundaries: {},
+  } as unknown as PublicSnapshot;
+
+  it("uses the project target when an issue has no due date", () => {
+    expect(dependencyIssueDate("explicit", snapshot)).toBe("2026-08-10");
+    expect(dependencyIssueDate("fallback", snapshot)).toBe("2026-08-20");
+  });
+
+  it("sorts dated issues chronologically and puts fully undated issues last", () => {
+    expect(["undated", "fallback", "explicit"].sort((a, b) => compareDependencyIssues(a, b, snapshot))).toEqual([
+      "explicit",
+      "fallback",
+      "undated",
     ]);
   });
 });
