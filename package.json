@@ -7,6 +7,7 @@
     "dev": "astro dev",
     "build": "astro build",
     "build:cached": "LINEAR_SKIP_SYNC=1 astro build",
+    "deploy": "npm run build && wrangler deploy",
     "preview": "astro preview",
     "sync": "tsx scripts/sync.ts",
     "pull:initiative-overview": "tsx scripts/pull-initiative-overview.ts",
@@ -28,6 +29,7 @@
     "graphql": "^16.11.0",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "wrangler": "^4.42.0"
   }
 }

@@ -7,7 +7,7 @@ interface Props {
   generatedAt?: string;
 }
 
-const { title, description = "A public view of work tracked in Linear", generatedAt } = Astro.props;
+const { title, description = "An invite-only view of work tracked in Linear", generatedAt } = Astro.props;
 ---
 
 <!doctype html>
@@ -27,6 +27,7 @@ const { title, description = "A public view of work tracked in Linear", generate
         <a href="/timeline/">Timeline</a>
         <a href="/dependencies/">Dependencies</a>
         <a href="/search/">Search</a>
+        <a href="/cdn-cgi/access/logout">Sign out</a>
       </nav>
     </header>
     <main id="content">
