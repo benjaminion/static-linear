@@ -48,9 +48,16 @@ const cycles = dependencyCycles(snapshot);
       <span class="graph-toggle__dot" aria-hidden="true"></span>
       <span data-done-label>Hide Done</span>
     </button>
+    <div class="graph-zoom-controls" role="group" aria-label="Graph zoom controls">
+      <button type="button" aria-label="Zoom out" data-zoom-out>−</button>
+      <output aria-live="polite" aria-label="Current zoom" data-zoom-level>100%</output>
+      <button type="button" aria-label="Zoom in" data-zoom-in>+</button>
+      <button type="button" data-fit-graph>Fit</button>
+    </div>
     <button class="button button--secondary" type="button" data-reset-graph>Reset view</button>
   </div>
-  <svg class="dependency-graph" viewBox="0 0 1000 600" role="img" aria-label="Blocking issue dependency graph" data-graph-svg>
+  <p class="graph-help" id="dependency-graph-help">Scroll or pinch to zoom. Drag to pan. Use +, −, arrow keys, or 0 when the graph is focused.</p>
+  <svg class="dependency-graph" viewBox="0 0 1000 600" role="img" aria-label="Blocking issue dependency graph" aria-describedby="dependency-graph-help" tabindex="0" data-graph-svg>
     <defs>
       <marker id="arrowhead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L10,4 L0,8 Z"></path></marker>
     </defs>
@@ -63,6 +70,13 @@ const cycles = dependencyCycles(snapshot);
 </div>
 
 <script>
+  import {
+    clientPanToGraphDelta,
+    graphZoom,
+    panGraphCamera,
+    zoomGraphCamera,
+    type GraphViewBox,
+  } from "../lib/dependency-camera";
   import { layoutDependencyNodes, routeDependencyEdges } from "../lib/dependency-layout";
 
   interface GraphNode {
@@ -76,6 +90,10 @@ const cycles = dependencyCycles(snapshot);
   }
   interface GraphEdge { source: string; target: string }
   interface GraphData { nodes: GraphNode[]; edges: GraphEdge[] }
+  interface GraphCamera {
+    fit: (base?: GraphViewBox) => void;
+    zoomBy: (factor: number) => void;
+  }
 
   const NODE_RADIUS = 28;
   const ANNOTATION_HEIGHT = 38;
@@ -137,7 +155,164 @@ const cycles = dependencyCycles(snapshot);
     return group;
   }
 
-  function renderGraph(root: HTMLElement) {
+  function createGraphCamera(root: HTMLElement): GraphCamera {
+    const svg = root.querySelector<SVGSVGElement>("[data-graph-svg]")!;
+    const zoomLevel = root.querySelector<HTMLOutputElement>("[data-zoom-level]");
+    const zoomOut = root.querySelector<HTMLButtonElement>("[data-zoom-out]");
+    const zoomIn = root.querySelector<HTMLButtonElement>("[data-zoom-in]");
+    let base: GraphViewBox = { x: 0, y: 0, width: 1000, height: 600 };
+    let camera: GraphViewBox = { ...base };
+    let suppressClickUntil = 0;
+    let dragged = false;
+    const pointers = new Map<number, { x: number; y: number }>();
+    let gesture: {
+      points: Map<number, { x: number; y: number }>;
+      camera: GraphViewBox;
+      distance: number;
+      midpoint: { x: number; y: number };
+      anchor: { x: number; y: number };
+    } | null = null;
+
+    const apply = (next: GraphViewBox) => {
+      camera = next;
+      svg.setAttribute("viewBox", `${camera.x} ${camera.y} ${camera.width} ${camera.height}`);
+      const zoom = graphZoom(base, camera);
+      if (zoomLevel) zoomLevel.value = `${Math.round(zoom * 100)}%`;
+      if (zoomOut) zoomOut.disabled = zoom <= 1.001;
+      if (zoomIn) zoomIn.disabled = zoom >= 3.999;
+    };
+    const clientPointToGraph = (x: number, y: number) => {
+      const point = svg.createSVGPoint();
+      point.x = x;
+      point.y = y;
+      const matrix = svg.getScreenCTM();
+      if (!matrix) return { x: camera.x + camera.width / 2, y: camera.y + camera.height / 2 };
+      const graphPoint = point.matrixTransform(matrix.inverse());
+      return { x: graphPoint.x, y: graphPoint.y };
+    };
+    const midpoint = (points: Array<{ x: number; y: number }>) => ({
+      x: points.reduce((sum, point) => sum + point.x, 0) / points.length,
+      y: points.reduce((sum, point) => sum + point.y, 0) / points.length,
+    });
+    const distance = (points: Array<{ x: number; y: number }>) => points.length < 2
+      ? 0
+      : Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y);
+    const beginGesture = () => {
+      if (!pointers.size) {
+        gesture = null;
+        return;
+      }
+      const points = [...pointers.values()].slice(0, 2);
+      const middle = midpoint(points);
+      gesture = {
+        points: new Map(pointers),
+        camera: { ...camera },
+        distance: distance(points),
+        midpoint: middle,
+        anchor: clientPointToGraph(middle.x, middle.y),
+      };
+    };
+    const viewport = () => {
+      const rect = svg.getBoundingClientRect();
+      return { width: rect.width, height: rect.height };
+    };
+    const fit = (nextBase?: GraphViewBox) => {
+      if (nextBase) base = { ...nextBase };
+      apply({ ...base });
+    };
+    const zoomBy = (factor: number, anchor?: { x: number; y: number }) => {
+      apply(zoomGraphCamera(base, camera, graphZoom(base, camera) * factor, anchor));
+    };
+
+    zoomOut?.addEventListener("click", () => zoomBy(1 / 1.35));
+    zoomIn?.addEventListener("click", () => zoomBy(1.35));
+    root.querySelector<HTMLButtonElement>("[data-fit-graph]")?.addEventListener("click", () => fit());
+    svg.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      const delta = event.deltaY * (event.deltaMode === WheelEvent.DOM_DELTA_LINE
+        ? 16
+        : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? svg.clientHeight : 1);
+      zoomBy(Math.exp(-delta * 0.002), clientPointToGraph(event.clientX, event.clientY));
+    }, { passive: false });
+    svg.addEventListener("pointerdown", (event) => {
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      svg.setPointerCapture(event.pointerId);
+      dragged = false;
+      beginGesture();
+    });
+    svg.addEventListener("pointermove", (event) => {
+      if (!pointers.has(event.pointerId) || !gesture) return;
+      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      const startPoints = [...gesture.points.values()].slice(0, 2);
+      const currentPoints = [...pointers.values()].slice(0, 2);
+      const startMiddle = gesture.midpoint;
+      const currentMiddle = midpoint(currentPoints);
+      const movement = Math.hypot(currentMiddle.x - startMiddle.x, currentMiddle.y - startMiddle.y);
+      if (movement > 4 || currentPoints.length > 1) {
+        dragged = true;
+        svg.classList.add("dependency-graph--panning");
+      }
+      if (currentPoints.length > 1 && startPoints.length > 1) {
+        const ratio = gesture.distance ? distance(currentPoints) / gesture.distance : 1;
+        const zoomed = zoomGraphCamera(
+          base,
+          gesture.camera,
+          graphZoom(base, gesture.camera) * ratio,
+          gesture.anchor,
+        );
+        const delta = clientPanToGraphDelta(
+          zoomed,
+          viewport(),
+          currentMiddle.x - startMiddle.x,
+          currentMiddle.y - startMiddle.y,
+        );
+        apply(panGraphCamera(base, zoomed, -delta.x, -delta.y));
+      } else {
+        const delta = clientPanToGraphDelta(
+          gesture.camera,
+          viewport(),
+          currentMiddle.x - startMiddle.x,
+          currentMiddle.y - startMiddle.y,
+        );
+        apply(panGraphCamera(base, gesture.camera, -delta.x, -delta.y));
+      }
+    });
+    const endPointer = (event: PointerEvent) => {
+      if (!pointers.has(event.pointerId)) return;
+      pointers.delete(event.pointerId);
+      if (svg.hasPointerCapture(event.pointerId)) svg.releasePointerCapture(event.pointerId);
+      if (dragged) suppressClickUntil = performance.now() + 350;
+      svg.classList.remove("dependency-graph--panning");
+      beginGesture();
+    };
+    svg.addEventListener("pointerup", endPointer);
+    svg.addEventListener("pointercancel", endPointer);
+    svg.addEventListener("click", (event) => {
+      if (performance.now() > suppressClickUntil) return;
+      event.preventDefault();
+      event.stopPropagation();
+      suppressClickUntil = 0;
+    }, true);
+    svg.addEventListener("keydown", (event) => {
+      if (event.target instanceof SVGAElement && (event.key === "Enter" || event.key === " ")) return;
+      const panX = camera.width * 0.1;
+      const panY = camera.height * 0.1;
+      if (event.key === "+" || event.key === "=") zoomBy(1.35);
+      else if (event.key === "-") zoomBy(1 / 1.35);
+      else if (event.key === "0") fit();
+      else if (event.key === "ArrowLeft") apply(panGraphCamera(base, camera, -panX, 0));
+      else if (event.key === "ArrowRight") apply(panGraphCamera(base, camera, panX, 0));
+      else if (event.key === "ArrowUp") apply(panGraphCamera(base, camera, 0, -panY));
+      else if (event.key === "ArrowDown") apply(panGraphCamera(base, camera, 0, panY));
+      else return;
+      event.preventDefault();
+    });
+
+    return { fit, zoomBy };
+  }
+
+  function renderGraph(root: HTMLElement, camera: GraphCamera) {
     const dataNode = root.querySelector<HTMLScriptElement>("[data-graph-data]");
     const all = JSON.parse(dataNode?.textContent || "{}") as GraphData;
     const project = root.querySelector<HTMLSelectElement>("[data-graph-project]")?.value ?? "";
@@ -221,7 +396,7 @@ const cycles = dependencyCycles(snapshot);
       : layout.minY;
     const minY = Math.min(layout.minY, annotationTop);
     const maxY = layout.maxY;
-    svg.setAttribute("viewBox", `0 ${minY} ${nodeLayout.width} ${maxY - minY}`);
+    camera.fit({ x: 0, y: minY, width: nodeLayout.width, height: maxY - minY });
 
     const clearHighlight = () => {
       for (const circle of nodeCircles.values()) {
@@ -251,7 +426,8 @@ const cycles = dependencyCycles(snapshot);
     }
   }
   document.querySelectorAll<HTMLElement>("[data-graph]").forEach((root) => {
-    renderGraph(root);
+    const camera = createGraphCamera(root);
+    renderGraph(root, camera);
     const projectFilter = root.querySelector<HTMLSelectElement>("[data-graph-project]");
     const doneToggle = root.querySelector<HTMLButtonElement>("[data-show-done]");
     const doneLabel = doneToggle?.querySelector<HTMLElement>("[data-done-label]");
@@ -259,15 +435,15 @@ const cycles = dependencyCycles(snapshot);
       doneToggle?.setAttribute("aria-pressed", String(visible));
       if (doneLabel) doneLabel.textContent = visible ? "Hide Done" : "Show Done";
     };
-    projectFilter?.addEventListener("change", () => renderGraph(root));
+    projectFilter?.addEventListener("change", () => renderGraph(root, camera));
     doneToggle?.addEventListener("click", () => {
       setDoneVisibility(doneToggle.getAttribute("aria-pressed") !== "true");
-      renderGraph(root);
+      renderGraph(root, camera);
     });
     root.querySelector<HTMLButtonElement>("[data-reset-graph]")?.addEventListener("click", () => {
       if (projectFilter) projectFilter.value = "";
       setDoneVisibility(true);
-      renderGraph(root);
+      renderGraph(root, camera);
     });
   });
 </script>

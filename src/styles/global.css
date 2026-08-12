@@ -135,7 +135,17 @@ p { line-height: 1.55; }
 .graph-toggle__dot { width: .65rem; height: .65rem; border: 2px solid #8b918c; border-radius: 50%; background: #e6e7e4; }
 .graph-toggle[aria-pressed="false"] { color: var(--muted); opacity: .65; }
 .graph-toggle[aria-pressed="false"] .graph-toggle__dot { background: transparent; }
-.dependency-graph { display: block; width: 100%; max-height: 64vh; min-height: 18rem; border: 1px solid #eceee9; background: radial-gradient(circle, #dfe3dc 1px, transparent 1px); background-size: 18px 18px; }
+.graph-zoom-controls { display: inline-grid; grid-template-columns: 2.2rem 3.5rem 2.2rem 2.7rem; min-height: 2.2rem; border: 1px solid var(--line); border-radius: 2px; background: var(--surface); }
+.graph-zoom-controls button { min-width: 0; padding: .35rem; border: 0; border-left: 1px solid var(--line); background: transparent; color: var(--ink); font-size: .75rem; font-weight: 650; }
+.graph-zoom-controls button:first-child { border-left: 0; }
+.graph-zoom-controls button:hover:not(:disabled) { background: var(--teal-soft); }
+.graph-zoom-controls button:disabled { cursor: default; opacity: .35; }
+.graph-zoom-controls output { display: grid; place-items: center; color: var(--muted); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: .67rem; }
+.graph-help { margin: -.2rem 0 .55rem; color: var(--muted); font-size: .68rem; text-align: right; }
+.dependency-graph { display: block; width: 100%; max-height: 64vh; min-height: 18rem; border: 1px solid #eceee9; background: radial-gradient(circle, #dfe3dc 1px, transparent 1px); background-size: 18px 18px; cursor: grab; touch-action: none; user-select: none; }
+.dependency-graph--panning { cursor: grabbing; }
+.dependency-graph a { cursor: pointer; }
+.dependency-graph--panning a { cursor: grabbing; }
 .graph-node { fill: var(--teal-soft); stroke: var(--teal); stroke-width: 2; transition: stroke-width .12s ease; }
 .graph-node--todo { fill: #d9e6f7; stroke: #3a6ea8; }
 .graph-node--started { fill: var(--teal-soft); stroke: var(--teal); }
