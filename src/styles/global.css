@@ -112,6 +112,9 @@ p { line-height: 1.55; }
 .graph-shell { padding: .7rem; border: 1px solid var(--line); background: var(--surface); box-shadow: var(--shadow); }
 .dependency-graph { display: block; width: 100%; max-height: 64vh; min-height: 18rem; border: 1px solid #eceee9; background: radial-gradient(circle, #dfe3dc 1px, transparent 1px); background-size: 18px 18px; }
 .graph-node { fill: var(--teal-soft); stroke: var(--teal); stroke-width: 2; transition: stroke-width .12s ease; }
+.graph-node--todo { fill: #d9e6f7; stroke: #3a6ea8; }
+.graph-node--started { fill: var(--teal-soft); stroke: var(--teal); }
+.graph-node--done { fill: #e6e7e4; stroke: #8b918c; }
 .graph-node--boundary { fill: #ece9e2; stroke: #8e887b; stroke-dasharray: 3 3; }
 .graph-node--active,
 .graph-node--related { stroke-width: 3.5; }
