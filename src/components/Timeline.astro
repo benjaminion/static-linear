@@ -128,17 +128,22 @@ function projectBarClass(statusType: string): string {
     const max = Math.max(...dates) + padding;
     const span = Math.max(max - min, DAY);
     const scale = root.querySelector<HTMLSelectElement>("[data-scale]")?.value ?? "comfortable";
-    const width = scale === "compact" ? 720 : scale === "expanded" ? 1600 : 1100;
+    const preferredWidth = scale === "compact" ? 720 : scale === "expanded" ? 1600 : 1100;
     const canvas = root.querySelector<HTMLElement>("[data-timeline-canvas]");
     const axis = root.querySelector<HTMLElement>("[data-timeline-axis]");
     const grid = root.querySelector<HTMLElement>("[data-timeline-grid]");
     const todayEl = root.querySelector<HTMLElement>("[data-today]");
+    const scrollEl = root.querySelector<HTMLElement>(".timeline-scroll");
     if (!canvas || !axis || !grid) return;
-    canvas.style.setProperty("--track-width", `${width}px`);
 
     const labelWidth = root.querySelector(".timeline-label")?.getBoundingClientRect().width
       ?? (window.matchMedia("(max-width: 720px)").matches ? 180 : 220);
+    // Grow the track to fill the visible scroll area so grid/headers never stop short
+    // of the viewport edge (especially in Compact on wide screens).
+    const availableWidth = Math.max(0, (scrollEl?.clientWidth ?? preferredWidth) - labelWidth);
+    const width = Math.max(preferredWidth, availableWidth);
     canvas.style.setProperty("--label-width", `${labelWidth}px`);
+    canvas.style.setProperty("--track-width", `${width}px`);
 
     const percentFromTime = (time: number) => ((time - min) / span) * 100;
     const percent = (date: string) => percentFromTime(new Date(`${date}T00:00:00Z`).getTime());
