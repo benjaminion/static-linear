@@ -1,0 +1,209 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import Metric from "../components/Metric.astro";
+import { readSnapshot } from "../lib/snapshot";
+import {
+  compareNullableDates,
+  formatDate,
+  initiativeProjects,
+  issueHref,
+  issueOwner,
+  projectHref,
+  projectOwner,
+  statusClass,
+} from "../lib/view";
+import type { PublicIssue, PublicProject } from "../lib/schema";
+
+interface OwnerGroup {
+  key: string;
+  name: string;
+  projects: PublicProject[];
+  issues: PublicIssue[];
+  hasDescriptionAssignment: boolean;
+}
+
+const snapshot = await readSnapshot();
+const groupsByKey = new Map<string, OwnerGroup>();
+
+function groupFor(owner: ReturnType<typeof projectOwner>) {
+  const existing = groupsByKey.get(owner.key);
+  if (existing) {
+    if (owner.source === "linear" && existing.name === "Unassigned") existing.name = owner.name;
+    existing.hasDescriptionAssignment ||= owner.source === "description";
+    return existing;
+  }
+  const group = {
+    key: owner.key,
+    name: owner.name,
+    projects: [],
+    issues: [],
+    hasDescriptionAssignment: owner.source === "description",
+  };
+  groupsByKey.set(owner.key, group);
+  return group;
+}
+
+const projects = initiativeProjects(snapshot);
+const issues = Object.values(snapshot.issues);
+for (const project of projects) groupFor(projectOwner(project)).projects.push(project);
+for (const issue of issues) groupFor(issueOwner(issue)).issues.push(issue);
+
+const ownerCollator = new Intl.Collator("en", { sensitivity: "base", numeric: true });
+const groups = [...groupsByKey.values()]
+  .map((group) => ({
+    ...group,
+    projects: group.projects.sort((a, b) =>
+      compareNullableDates(a.targetDate, b.targetDate) || ownerCollator.compare(a.name, b.name)),
+    issues: group.issues.sort((a, b) =>
+      compareNullableDates(a.dueDate, b.dueDate) || a.identifier.localeCompare(b.identifier, "en", { numeric: true })),
+  }))
+  .sort((a, b) => {
+    if (a.key === "unassigned") return 1;
+    if (b.key === "unassigned") return -1;
+    return ownerCollator.compare(a.name, b.name);
+  });
+const taskStatuses = [...new Map(
+  issues.map((issue) => [issue.state.name, { name: issue.state.name, type: issue.state.type }]),
+).values()].sort((a, b) => ownerCollator.compare(a.name, b.name));
+const unassignedCount = (groupsByKey.get("unassigned")?.projects.length ?? 0)
+  + (groupsByKey.get("unassigned")?.issues.length ?? 0);
+---
+
+<BaseLayout title={`People · ${snapshot.initiative.name}`} generatedAt={snapshot.generatedAt}>
+  <header class="page-header">
+    <span class="eyebrow">Ownership</span>
+    <h1>People</h1>
+    <p>See who owns each stream of work, what is coming due, and which tasks still need an owner.</p>
+  </header>
+
+  <section class="metric-grid" aria-label="Ownership summary">
+    <Metric label="Owners" value={groups.filter((group) => group.key !== "unassigned").length} />
+    <Metric label="Projects" value={projects.length} />
+    <Metric label="Tasks" value={issues.length} />
+    <Metric label="Unassigned" value={unassignedCount} note="Projects and tasks" />
+  </section>
+
+  <section class="content-section people-shell" data-people>
+    <div class="section-heading people-heading">
+      <div><span class="eyebrow">Workload</span><h2>Projects and tasks by owner</h2></div>
+      <span aria-live="polite" data-people-summary>{projects.length} project{projects.length === 1 ? "" : "s"} · {issues.length} task{issues.length === 1 ? "" : "s"}</span>
+    </div>
+    <div class="toolbar people-toolbar" aria-label="People filters">
+      <label>Owner
+        <select data-owner-filter>
+          <option value="all">All owners</option>
+          {groups.map((group) => <option value={group.key}>{group.name}</option>)}
+        </select>
+      </label>
+      <fieldset class="status-filter" data-status-filter>
+        <legend>Task statuses <span>Any selected</span></legend>
+        <div class="status-filter__options">
+          {taskStatuses.map((status) => (
+            <button
+              class:list={["status-filter__button", statusClass(status.type)]}
+              type="button"
+              aria-pressed="true"
+              data-status={status.name}
+            >{status.name}</button>
+          ))}
+        </div>
+      </fieldset>
+    </div>
+
+    <div class="people-groups">
+      {groups.map((group) => (
+        <section class:list={["person-card", { "person-card--unassigned": group.key === "unassigned" }]} data-owner-group={group.key}>
+          <header class="person-card__header">
+            <span class="person-avatar" aria-hidden="true">{group.key === "unassigned" ? "?" : group.name.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase()}</span>
+            <div>
+              <h3>{group.name}</h3>
+              <p data-group-summary>{group.projects.length} project{group.projects.length === 1 ? "" : "s"} · {group.issues.length} task{group.issues.length === 1 ? "" : "s"}</p>
+            </div>
+            {group.hasDescriptionAssignment && <span class="assignment-note" title="At least one assignment was read from a Lead: or Owner: line in a description">Includes description owners</span>}
+          </header>
+          <div class="person-work">
+            <div class="person-work__column" data-project-column>
+              <h4>Projects</h4>
+              <ol class="people-list">
+                {group.projects.map((project) => (
+                  <li data-work-item data-kind="project">
+                    <div class="people-list__main"><a href={projectHref(project)}>{project.name}</a><span class={statusClass(project.status.type)}>{project.status.name}</span></div>
+                    <span class="people-date"><span>Target</span> {formatDate(project.targetDate)}</span>
+                  </li>
+                ))}
+              </ol>
+              <p class="people-empty" data-project-empty hidden={group.projects.length !== 0}>No projects for this owner.</p>
+            </div>
+            <div class="person-work__column" data-task-column>
+              <h4>Tasks</h4>
+              <ol class="people-list">
+                {group.issues.map((issue) => (
+                  <li data-work-item data-kind="task" data-status={issue.state.name}>
+                    <div class="people-list__main">
+                      <a href={issueHref(issue)}><span class="issue-identifier">{issue.identifier}</span> {issue.title}</a>
+                      <span class={statusClass(issue.state.type)}>{issue.state.name}</span>
+                    </div>
+                    <span class="people-date"><span>Due</span> {formatDate(issue.dueDate)}</span>
+                    <span class="people-project">{snapshot.projects[issue.projectId]?.name}</span>
+                  </li>
+                ))}
+              </ol>
+              <p class="people-empty" data-task-empty hidden={group.issues.length !== 0}>No tasks match this status.</p>
+            </div>
+          </div>
+        </section>
+      ))}
+    </div>
+    <p class="empty-state people-no-results" data-no-results hidden>No work matches these filters.</p>
+  </section>
+</BaseLayout>
+
+<script>
+  document.querySelectorAll<HTMLElement>("[data-people]").forEach((root) => {
+    const ownerFilter = root.querySelector<HTMLSelectElement>("[data-owner-filter]");
+    const statusButtons = [...root.querySelectorAll<HTMLButtonElement>("[data-status-filter] [data-status]")];
+    const summary = root.querySelector<HTMLElement>("[data-people-summary]");
+    const noResults = root.querySelector<HTMLElement>("[data-no-results]");
+    if (!ownerFilter || !summary || !noResults) return;
+
+    const render = () => {
+      let visibleProjects = 0;
+      let visibleTasks = 0;
+      let visibleGroups = 0;
+      const activeStatuses = new Set(
+        statusButtons.filter((button) => button.getAttribute("aria-pressed") === "true").map((button) => button.dataset.status),
+      );
+      root.querySelectorAll<HTMLElement>("[data-owner-group]").forEach((group) => {
+        const ownerMatches = ownerFilter.value === "all" || group.dataset.ownerGroup === ownerFilter.value;
+        const projects = [...group.querySelectorAll<HTMLElement>('[data-work-item][data-kind="project"]')];
+        const tasks = [...group.querySelectorAll<HTMLElement>('[data-work-item][data-kind="task"]')];
+        for (const project of projects) project.hidden = !ownerMatches;
+        for (const task of tasks) {
+          task.hidden = !ownerMatches || !activeStatuses.has(task.dataset.status);
+        }
+        const projectCount = projects.filter((item) => !item.hidden).length;
+        const taskCount = tasks.filter((item) => !item.hidden).length;
+        group.hidden = projectCount + taskCount === 0;
+        if (!group.hidden) visibleGroups += 1;
+        visibleProjects += projectCount;
+        visibleTasks += taskCount;
+        const groupSummary = group.querySelector<HTMLElement>("[data-group-summary]");
+        const projectEmpty = group.querySelector<HTMLElement>("[data-project-empty]");
+        const taskEmpty = group.querySelector<HTMLElement>("[data-task-empty]");
+        if (groupSummary) groupSummary.textContent = `${projectCount} project${projectCount === 1 ? "" : "s"} · ${taskCount} task${taskCount === 1 ? "" : "s"}`;
+        if (projectEmpty) projectEmpty.hidden = projectCount !== 0;
+        if (taskEmpty) taskEmpty.hidden = taskCount !== 0;
+      });
+      summary.textContent = `${visibleProjects} project${visibleProjects === 1 ? "" : "s"} · ${visibleTasks} task${visibleTasks === 1 ? "" : "s"}`;
+      noResults.hidden = visibleGroups !== 0;
+    };
+    ownerFilter.addEventListener("change", render);
+    for (const button of statusButtons) {
+      button.addEventListener("click", () => {
+        button.setAttribute("aria-pressed", String(button.getAttribute("aria-pressed") !== "true"));
+        render();
+      });
+    }
+    render();
+  });
+</script>

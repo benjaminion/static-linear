@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { compareDependencyIssues, compareProjects, dependencyIssueDate, serializeForScript } from "../src/lib/view";
-import type { PublicProject, PublicSnapshot } from "../src/lib/schema";
+import {
+  compareDependencyIssues,
+  compareNullableDates,
+  compareProjects,
+  dependencyIssueDate,
+  issueOwner,
+  projectOwner,
+  serializeForScript,
+} from "../src/lib/view";
+import type { PublicIssue, PublicProject, PublicSnapshot } from "../src/lib/schema";
 
 function project(name: string): PublicProject {
   return { name, id: name } as PublicProject;
@@ -52,5 +60,48 @@ describe("serializeForScript", () => {
     const serialized = serializeForScript({ title: "</script><script>alert(1)</script>" });
     expect(serialized).not.toContain("<");
     expect(JSON.parse(serialized).title).toBe("</script><script>alert(1)</script>");
+  });
+});
+
+describe("work ownership", () => {
+  it("prefers Linear project leads and issue assignees", () => {
+    expect(projectOwner({
+      lead: { id: "ada", name: "Ada Lovelace" },
+      summary: "Owner: Someone else",
+      descriptionHtml: "",
+    } as PublicProject)).toMatchObject({ name: "Ada Lovelace", source: "linear" });
+    expect(issueOwner({
+      assignee: { id: "grace", name: "Grace Hopper" },
+      descriptionHtml: "<p>Lead: Someone else</p>",
+    } as PublicIssue)).toMatchObject({ name: "Grace Hopper", source: "linear" });
+  });
+
+  it("reads line-based owner markers from sanitized descriptions", () => {
+    expect(projectOwner({
+      lead: null,
+      summary: "Delivery stream\nOwner: Lin Chen",
+      descriptionHtml: "",
+    } as PublicProject)).toMatchObject({ name: "Lin Chen", source: "description" });
+    expect(issueOwner({
+      assignee: null,
+      descriptionHtml: "<p>Context</p><p><strong>Lead:</strong> Sam Taylor</p>",
+    } as PublicIssue)).toMatchObject({ name: "Sam Taylor", source: "description" });
+    expect(projectOwner({
+      lead: null,
+      summary: "A short summary without an owner",
+      descriptionHtml: "<p><strong>Lead:</strong> Priya Shah</p>",
+    } as PublicProject)).toMatchObject({ name: "Priya Shah", source: "description" });
+  });
+
+  it("does not treat inline prose as an ownership marker", () => {
+    expect(issueOwner({
+      assignee: null,
+      descriptionHtml: "<p>Ask the Owner: team before publishing.</p>",
+    } as PublicIssue)).toEqual({ key: "unassigned", name: "Unassigned", source: "unassigned" });
+  });
+
+  it("sorts dates chronologically with unset dates last", () => {
+    const dates = [null, "2026-09-01", "2026-08-01"];
+    expect(dates.sort(compareNullableDates)).toEqual(["2026-08-01", "2026-09-01", null]);
   });
 });

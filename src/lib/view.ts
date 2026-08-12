@@ -2,6 +2,12 @@ import type { PublicIssue, PublicProject, PublicSnapshot } from "./schema";
 
 const projectNameCollator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
 
+export interface WorkOwner {
+  key: string;
+  name: string;
+  source: "linear" | "description" | "unassigned";
+}
+
 export function formatDate(value: string | null | undefined): string {
   if (!value) return "Not set";
   return new Intl.DateTimeFormat("en-GB", {
@@ -64,6 +70,64 @@ export function issueRoots(project: PublicProject, snapshot: PublicSnapshot): Pu
 
 export function compareIssues(a: PublicIssue, b: PublicIssue): number {
   return a.priority - b.priority || a.identifier.localeCompare(b.identifier);
+}
+
+export function projectOwner(project: PublicProject): WorkOwner {
+  if (project.lead) return namedOwner(project.lead.name, "linear");
+  const summaryOwner = descriptionOwner(project.summary);
+  return summaryOwner.source === "description"
+    ? summaryOwner
+    : descriptionOwner(project.descriptionHtml);
+}
+
+export function issueOwner(issue: PublicIssue): WorkOwner {
+  if (issue.assignee) return namedOwner(issue.assignee.name, "linear");
+  return descriptionOwner(issue.descriptionHtml);
+}
+
+export function compareNullableDates(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): number {
+  if (a === b) return 0;
+  if (!a) return 1;
+  if (!b) return -1;
+  return a.localeCompare(b);
+}
+
+function descriptionOwner(value: string): WorkOwner {
+  const text = htmlToText(value);
+  const match = text.match(
+    /(?:^|\n)\s*(?:[-+*]\s+)?(?:#{1,6}\s+)?(?:\*\*|__)?(?:lead|owner)(?:\*\*|__)?\s*:\s*([^\n]+)/i,
+  );
+  const name = match?.[1]
+    ?.replace(/^\s*(?:\*\*|__)/, "")
+    .replace(/(?:\*\*|__)\s*$/, "")
+    .trim();
+  return name && name.length <= 120
+    ? namedOwner(name, "description")
+    : { key: "unassigned", name: "Unassigned", source: "unassigned" };
+}
+
+function namedOwner(name: string, source: WorkOwner["source"]): WorkOwner {
+  return {
+    key: `owner:${name.trim().toLocaleLowerCase("en")}`,
+    name: name.trim(),
+    source,
+  };
+}
+
+function htmlToText(value: string): string {
+  return value
+    .replace(/<\s*br\s*\/?>/gi, "\n")
+    .replace(/<\/(?:p|div|li|h[1-6]|blockquote)>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, "\"")
+    .replace(/&#(?:39|x27);/gi, "'");
 }
 
 export function blockingRelations(snapshot: PublicSnapshot) {

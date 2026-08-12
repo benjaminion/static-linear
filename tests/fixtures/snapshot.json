@@ -71,7 +71,7 @@
       "projectId": "project-alpha",
       "parentId": "issue-one",
       "childIds": [],
-      "descriptionHtml": "<p>Ship an implementation of the contract.</p>",
+      "descriptionHtml": "<p>Ship an implementation of the contract.</p><p>Owner: Delivery Partner</p>",
       "state": { "name": "Planned", "type": "unstarted", "color": "#777777" },
       "priority": 3,
       "priorityLabel": "Medium",
