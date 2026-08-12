@@ -366,10 +366,7 @@ const cycles = dependencyCycles(snapshot);
       const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
       text.setAttribute("x", String(x)); text.setAttribute("y", String(y + 4)); text.setAttribute("text-anchor", "middle");
       text.textContent = node.label.length > 16 ? `${node.label.slice(0, 14)}…` : node.label;
-      const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
-      const dateNote = node.dueDate ? ` · Due ${node.dueDate}` : " · No date";
-      title.textContent = `${node.label}: ${node.title}${dateNote}`;
-      link.append(circle, text, title); nodeLayer.append(link);
+      link.append(circle, text); nodeLayer.append(link);
       nodeCircles.set(node.id, circle);
 
       const annotation = createAnnotation(node, x, y);
