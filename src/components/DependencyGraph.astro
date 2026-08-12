@@ -70,10 +70,19 @@ const cycles = dependencyCycles(snapshot);
     nodeLayer.replaceChildren(); edgeLayer.replaceChildren();
     const nodeLayout = layoutDependencyNodes(nodes.map((node) => node.id), edges);
     const positions = new Map(nodeLayout.nodes.map(({ id, x, y }) => [id, { x, y }]));
+    const nodeCircles = new Map<string, SVGCircleElement>();
+    const neighbors = new Map<string, Set<string>>();
+    for (const edge of edges) {
+      if (!neighbors.has(edge.source)) neighbors.set(edge.source, new Set());
+      if (!neighbors.has(edge.target)) neighbors.set(edge.target, new Set());
+      neighbors.get(edge.source)!.add(edge.target);
+      neighbors.get(edge.target)!.add(edge.source);
+    }
     nodes.forEach((node) => {
       const { x, y } = positions.get(node.id)!;
       positions.set(node.id, { x, y });
       const link = document.createElementNS("http://www.w3.org/2000/svg", "a");
+      link.setAttribute("data-node-id", node.id);
       if (node.href) link.setAttribute("href", node.href);
       const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
       circle.setAttribute("cx", String(x)); circle.setAttribute("cy", String(y)); circle.setAttribute("r", "28");
@@ -84,18 +93,48 @@ const cycles = dependencyCycles(snapshot);
       const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
       title.textContent = `${node.label}: ${node.title}`;
       link.append(circle, text, title); nodeLayer.append(link);
+      nodeCircles.set(node.id, circle);
     });
     const layout = routeDependencyEdges(
       [...positions].map(([id, position]) => ({ id, ...position })),
       edges,
     );
+    const edgePaths: SVGPathElement[] = [];
     layout.routes.forEach((route) => {
       const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
       path.setAttribute("d", route.d);
-      path.setAttribute("class", "graph-edge"); path.setAttribute("marker-end", "url(#arrowhead)");
+      path.setAttribute("class", "graph-edge");
+      path.setAttribute("data-source", route.source);
+      path.setAttribute("data-target", route.target);
+      path.setAttribute("marker-end", "url(#arrowhead)");
       edgeLayer.append(path);
+      edgePaths.push(path);
     });
     svg.setAttribute("viewBox", `0 ${layout.minY} ${nodeLayout.width} ${layout.maxY - layout.minY}`);
+
+    const clearHighlight = () => {
+      for (const circle of nodeCircles.values()) {
+        circle.classList.remove("graph-node--active", "graph-node--related");
+      }
+      for (const path of edgePaths) path.classList.remove("graph-edge--active");
+    };
+    const highlightNode = (id: string) => {
+      clearHighlight();
+      nodeCircles.get(id)?.classList.add("graph-node--active");
+      for (const neighborId of neighbors.get(id) ?? []) {
+        nodeCircles.get(neighborId)?.classList.add("graph-node--related");
+      }
+      for (const path of edgePaths) {
+        if (path.dataset.source === id || path.dataset.target === id) {
+          path.classList.add("graph-edge--active");
+        }
+      }
+    };
+    for (const [id, circle] of nodeCircles) {
+      const host = circle.parentElement;
+      host?.addEventListener("pointerenter", () => highlightNode(id));
+      host?.addEventListener("pointerleave", clearHighlight);
+    }
   }
   document.querySelectorAll<HTMLElement>("[data-graph]").forEach((root) => {
     renderGraph(root);
