@@ -22,8 +22,9 @@ export function zoomGraphCamera(
   camera: GraphViewBox,
   requestedZoom: number,
   anchor = { x: camera.x + camera.width / 2, y: camera.y + camera.height / 2 },
+  maxZoom = MAX_GRAPH_ZOOM,
 ): GraphViewBox {
-  const zoom = Math.min(MAX_GRAPH_ZOOM, Math.max(MIN_GRAPH_ZOOM, requestedZoom));
+  const zoom = Math.min(maxZoom, Math.max(MIN_GRAPH_ZOOM, requestedZoom));
   const width = base.width / zoom;
   const height = base.height / zoom;
   const anchorX = camera.width ? (anchor.x - camera.x) / camera.width : 0.5;
@@ -33,7 +34,7 @@ export function zoomGraphCamera(
     y: anchor.y - anchorY * height,
     width,
     height,
-  });
+  }, maxZoom);
 }
 
 export function panGraphCamera(
@@ -41,12 +42,13 @@ export function panGraphCamera(
   camera: GraphViewBox,
   deltaX: number,
   deltaY: number,
+  maxZoom = MAX_GRAPH_ZOOM,
 ): GraphViewBox {
   return clampGraphCamera(base, {
     ...camera,
     x: camera.x + deltaX,
     y: camera.y + deltaY,
-  });
+  }, maxZoom);
 }
 
 export function clientPanToGraphDelta(
@@ -62,9 +64,13 @@ export function clientPanToGraphDelta(
   return { x: clientDeltaX * scale, y: clientDeltaY * scale };
 }
 
-export function clampGraphCamera(base: GraphViewBox, camera: GraphViewBox): GraphViewBox {
-  const width = Math.min(base.width, Math.max(base.width / MAX_GRAPH_ZOOM, camera.width));
-  const height = Math.min(base.height, Math.max(base.height / MAX_GRAPH_ZOOM, camera.height));
+export function clampGraphCamera(
+  base: GraphViewBox,
+  camera: GraphViewBox,
+  maxZoom = MAX_GRAPH_ZOOM,
+): GraphViewBox {
+  const width = Math.min(base.width, Math.max(base.width / maxZoom, camera.width));
+  const height = Math.min(base.height, Math.max(base.height / maxZoom, camera.height));
   return {
     x: clamp(camera.x, base.x, base.x + base.width - width),
     y: clamp(camera.y, base.y, base.y + base.height - height),

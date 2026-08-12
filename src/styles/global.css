@@ -146,6 +146,8 @@ p { line-height: 1.55; }
 .dependency-graph--panning { cursor: grabbing; }
 .dependency-graph a { cursor: pointer; }
 .dependency-graph--panning a { cursor: grabbing; }
+.dependency-graph [data-node-id] { -webkit-tap-highlight-color: transparent; }
+.dependency-graph [data-node-id]:focus { outline: none; }
 .graph-node { fill: var(--teal-soft); stroke: var(--teal); stroke-width: 2; transition: stroke-width .12s ease; }
 .graph-node--todo { fill: #d9e6f7; stroke: #3a6ea8; }
 .graph-node--started { fill: var(--teal-soft); stroke: var(--teal); }
@@ -161,6 +163,12 @@ p { line-height: 1.55; }
 .graph-annotation__card { fill: var(--surface); stroke: var(--line); stroke-width: 1; filter: drop-shadow(0 1px 2px rgba(28, 35, 31, .12)); }
 .dependency-graph .graph-annotation__title { fill: var(--ink); font-family: system-ui, -apple-system, sans-serif; font-size: 10px; font-weight: 600; }
 .dependency-graph .graph-annotation__date { fill: var(--muted); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 9px; font-weight: 500; }
+.graph-annotation__open { display: none; pointer-events: all; }
+.graph-annotation--selected .graph-annotation__open { display: block; }
+.graph-annotation__open rect { fill: var(--teal); }
+.dependency-graph .graph-annotation__open text { fill: white; font-family: system-ui, -apple-system, sans-serif; font-size: 9px; font-weight: 650; pointer-events: none; }
+.graph-annotation__open:hover rect { fill: var(--ink); }
+.graph-annotation__open:focus-visible rect { stroke: var(--yellow); stroke-width: 3; }
 .dependency-graph marker path { fill: var(--accent); }
 .alert { margin-bottom: .7rem; padding: .7rem .9rem; border-left: 4px solid var(--accent); background: #fff0e9; font-size: .82rem; }
 .empty-state { color: var(--muted); font-style: italic; }

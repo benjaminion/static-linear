@@ -56,7 +56,7 @@ const cycles = dependencyCycles(snapshot);
     </div>
     <button class="button button--secondary" type="button" data-reset-graph>Reset view</button>
   </div>
-  <p class="graph-help" id="dependency-graph-help">Scroll or pinch to zoom. Drag to pan. Use +, −, arrow keys, or 0 when the graph is focused.</p>
+  <p class="graph-help" id="dependency-graph-help">Scroll or pinch to zoom. Drag to pan. On touch, tap a node to inspect it, then use Open issue. Use +, −, arrow keys, or 0 when the graph is focused.</p>
   <svg class="dependency-graph" viewBox="0 0 1000 600" role="img" aria-label="Blocking issue dependency graph" aria-describedby="dependency-graph-help" tabindex="0" data-graph-svg>
     <defs>
       <marker id="arrowhead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L10,4 L0,8 Z"></path></marker>
@@ -93,10 +93,12 @@ const cycles = dependencyCycles(snapshot);
   interface GraphCamera {
     fit: (base?: GraphViewBox) => void;
     zoomBy: (factor: number) => void;
+    setTouchTapHandler: (handler: (nodeId: string | null) => void) => void;
   }
 
   const NODE_RADIUS = 28;
   const ANNOTATION_HEIGHT = 38;
+  const SELECTED_ANNOTATION_HEIGHT = 56;
   const ANNOTATION_GAP = 10;
 
   function truncateLabel(value: string, max: number): string {
@@ -152,7 +154,49 @@ const cycles = dependencyCycles(snapshot);
     dateText.textContent = dateLine;
 
     group.append(card, titleText, dateText);
+    if (node.href) {
+      const openLink = document.createElementNS("http://www.w3.org/2000/svg", "a");
+      openLink.setAttribute("class", "graph-annotation__open");
+      openLink.setAttribute("href", node.href);
+      openLink.setAttribute("aria-label", `Open ${node.label}: ${node.title}`);
+      openLink.setAttribute("data-open-issue", "");
+
+      const openHitArea = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      openHitArea.setAttribute("x", String(x - 39));
+      openHitArea.setAttribute("y", String(cardY + 17));
+      openHitArea.setAttribute("width", "78");
+      openHitArea.setAttribute("height", "17");
+      openHitArea.setAttribute("rx", "3");
+
+      const openText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      openText.setAttribute("x", String(x));
+      openText.setAttribute("y", String(cardY + 29));
+      openText.setAttribute("text-anchor", "middle");
+      openText.textContent = "Open issue →";
+      openLink.append(openHitArea, openText);
+      group.append(openLink);
+    }
     return group;
+  }
+
+  function setAnnotationSelected(annotation: SVGGElement, selected: boolean): void {
+    annotation.classList.toggle("graph-annotation--selected", selected);
+    const card = annotation.querySelector<SVGRectElement>(".graph-annotation__card");
+    const title = annotation.querySelector<SVGTextElement>(".graph-annotation__title");
+    const date = annotation.querySelector<SVGTextElement>(".graph-annotation__date");
+    const offset = selected ? SELECTED_ANNOTATION_HEIGHT - ANNOTATION_HEIGHT : 0;
+    if (card) {
+      const normalY = Number(card.dataset.normalY ?? card.getAttribute("y"));
+      card.dataset.normalY = String(normalY);
+      card.setAttribute("y", String(normalY - offset));
+      card.setAttribute("height", String(selected ? SELECTED_ANNOTATION_HEIGHT : ANNOTATION_HEIGHT));
+    }
+    for (const text of [title, date]) {
+      if (!text) continue;
+      const normalY = Number(text.dataset.normalY ?? text.getAttribute("y"));
+      text.dataset.normalY = String(normalY);
+      text.setAttribute("y", String(normalY - offset));
+    }
   }
 
   function createGraphCamera(root: HTMLElement): GraphCamera {
@@ -160,10 +204,13 @@ const cycles = dependencyCycles(snapshot);
     const zoomLevel = root.querySelector<HTMLOutputElement>("[data-zoom-level]");
     const zoomOut = root.querySelector<HTMLButtonElement>("[data-zoom-out]");
     const zoomIn = root.querySelector<HTMLButtonElement>("[data-zoom-in]");
+    const maxZoom = window.matchMedia("(pointer: coarse)").matches ? 8 : 4;
     let base: GraphViewBox = { x: 0, y: 0, width: 1000, height: 600 };
     let camera: GraphViewBox = { ...base };
     let suppressClickUntil = 0;
     let dragged = false;
+    let touchTapHandler: (nodeId: string | null) => void = () => {};
+    let tapCandidate: { pointerId: number; nodeId: string | null } | null = null;
     const pointers = new Map<number, { x: number; y: number }>();
     let gesture: {
       points: Map<number, { x: number; y: number }>;
@@ -179,7 +226,7 @@ const cycles = dependencyCycles(snapshot);
       const zoom = graphZoom(base, camera);
       if (zoomLevel) zoomLevel.value = `${Math.round(zoom * 100)}%`;
       if (zoomOut) zoomOut.disabled = zoom <= 1.001;
-      if (zoomIn) zoomIn.disabled = zoom >= 3.999;
+      if (zoomIn) zoomIn.disabled = zoom >= maxZoom - 0.001;
     };
     const clientPointToGraph = (x: number, y: number) => {
       const point = svg.createSVGPoint();
@@ -221,7 +268,7 @@ const cycles = dependencyCycles(snapshot);
       apply({ ...base });
     };
     const zoomBy = (factor: number, anchor?: { x: number; y: number }) => {
-      apply(zoomGraphCamera(base, camera, graphZoom(base, camera) * factor, anchor));
+      apply(zoomGraphCamera(base, camera, graphZoom(base, camera) * factor, anchor, maxZoom));
     };
 
     zoomOut?.addEventListener("click", () => zoomBy(1 / 1.35));
@@ -236,9 +283,19 @@ const cycles = dependencyCycles(snapshot);
     }, { passive: false });
     svg.addEventListener("pointerdown", (event) => {
       if (event.pointerType === "mouse" && event.button !== 0) return;
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest("[data-open-issue]")) return;
       pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
       svg.setPointerCapture(event.pointerId);
       dragged = false;
+      if (event.pointerType === "touch" || event.pointerType === "pen") {
+        const nodeHost = target?.closest<SVGAElement>("[data-node-id]");
+        tapCandidate = pointers.size === 1
+          ? { pointerId: event.pointerId, nodeId: nodeHost?.dataset.nodeId ?? null }
+          : null;
+      } else {
+        tapCandidate = null;
+      }
       beginGesture();
     });
     svg.addEventListener("pointermove", (event) => {
@@ -251,6 +308,7 @@ const cycles = dependencyCycles(snapshot);
       const movement = Math.hypot(currentMiddle.x - startMiddle.x, currentMiddle.y - startMiddle.y);
       if (movement > 4 || currentPoints.length > 1) {
         dragged = true;
+        tapCandidate = null;
         svg.classList.add("dependency-graph--panning");
       }
       if (currentPoints.length > 1 && startPoints.length > 1) {
@@ -260,6 +318,7 @@ const cycles = dependencyCycles(snapshot);
           gesture.camera,
           graphZoom(base, gesture.camera) * ratio,
           gesture.anchor,
+          maxZoom,
         );
         const delta = clientPanToGraphDelta(
           zoomed,
@@ -267,7 +326,7 @@ const cycles = dependencyCycles(snapshot);
           currentMiddle.x - startMiddle.x,
           currentMiddle.y - startMiddle.y,
         );
-        apply(panGraphCamera(base, zoomed, -delta.x, -delta.y));
+        apply(panGraphCamera(base, zoomed, -delta.x, -delta.y, maxZoom));
       } else {
         const delta = clientPanToGraphDelta(
           gesture.camera,
@@ -275,20 +334,28 @@ const cycles = dependencyCycles(snapshot);
           currentMiddle.x - startMiddle.x,
           currentMiddle.y - startMiddle.y,
         );
-        apply(panGraphCamera(base, gesture.camera, -delta.x, -delta.y));
+        apply(panGraphCamera(base, gesture.camera, -delta.x, -delta.y, maxZoom));
       }
     });
     const endPointer = (event: PointerEvent) => {
       if (!pointers.has(event.pointerId)) return;
       pointers.delete(event.pointerId);
       if (svg.hasPointerCapture(event.pointerId)) svg.releasePointerCapture(event.pointerId);
-      if (dragged) suppressClickUntil = performance.now() + 350;
+      if (dragged || tapCandidate?.pointerId === event.pointerId) {
+        suppressClickUntil = performance.now() + 350;
+      }
+      if (!dragged && tapCandidate?.pointerId === event.pointerId) {
+        touchTapHandler(tapCandidate.nodeId);
+      }
+      tapCandidate = null;
       svg.classList.remove("dependency-graph--panning");
       beginGesture();
     };
     svg.addEventListener("pointerup", endPointer);
     svg.addEventListener("pointercancel", endPointer);
     svg.addEventListener("click", (event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest("[data-open-issue]")) return;
       if (performance.now() > suppressClickUntil) return;
       event.preventDefault();
       event.stopPropagation();
@@ -301,15 +368,19 @@ const cycles = dependencyCycles(snapshot);
       if (event.key === "+" || event.key === "=") zoomBy(1.35);
       else if (event.key === "-") zoomBy(1 / 1.35);
       else if (event.key === "0") fit();
-      else if (event.key === "ArrowLeft") apply(panGraphCamera(base, camera, -panX, 0));
-      else if (event.key === "ArrowRight") apply(panGraphCamera(base, camera, panX, 0));
-      else if (event.key === "ArrowUp") apply(panGraphCamera(base, camera, 0, -panY));
-      else if (event.key === "ArrowDown") apply(panGraphCamera(base, camera, 0, panY));
+      else if (event.key === "ArrowLeft") apply(panGraphCamera(base, camera, -panX, 0, maxZoom));
+      else if (event.key === "ArrowRight") apply(panGraphCamera(base, camera, panX, 0, maxZoom));
+      else if (event.key === "ArrowUp") apply(panGraphCamera(base, camera, 0, -panY, maxZoom));
+      else if (event.key === "ArrowDown") apply(panGraphCamera(base, camera, 0, panY, maxZoom));
       else return;
       event.preventDefault();
     });
 
-    return { fit, zoomBy };
+    return {
+      fit,
+      zoomBy,
+      setTouchTapHandler: (handler) => { touchTapHandler = handler; },
+    };
   }
 
   function renderGraph(root: HTMLElement, camera: GraphCamera) {
@@ -359,7 +430,9 @@ const cycles = dependencyCycles(snapshot);
       positions.set(node.id, { x, y });
       const link = document.createElementNS("http://www.w3.org/2000/svg", "a");
       link.setAttribute("data-node-id", node.id);
+      link.setAttribute("aria-label", `${node.label}: ${node.title}. ${node.dueDate ? `Due ${node.dueDate}` : "No date"}`);
       if (node.href) link.setAttribute("href", node.href);
+      else link.setAttribute("tabindex", "0");
       const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
       circle.setAttribute("cx", String(x)); circle.setAttribute("cy", String(y)); circle.setAttribute("r", String(NODE_RADIUS));
       circle.setAttribute("class", graphNodeClass(node));
@@ -389,23 +462,32 @@ const cycles = dependencyCycles(snapshot);
       edgePaths.push(path);
     });
     const annotationTop = nodes.length
-      ? Math.min(...nodes.map((node) => positions.get(node.id)!.y - NODE_RADIUS - ANNOTATION_GAP - ANNOTATION_HEIGHT - 8))
+      ? Math.min(...nodes.map((node) => positions.get(node.id)!.y - NODE_RADIUS - ANNOTATION_GAP - SELECTED_ANNOTATION_HEIGHT - 8))
       : layout.minY;
     const minY = Math.min(layout.minY, annotationTop);
     const maxY = layout.maxY;
     camera.fit({ x: 0, y: minY, width: nodeLayout.width, height: maxY - minY });
 
+    let selectedId: string | null = null;
     const clearHighlight = () => {
       for (const circle of nodeCircles.values()) {
         circle.classList.remove("graph-node--active", "graph-node--related");
       }
       for (const path of edgePaths) path.classList.remove("graph-edge--active");
-      for (const annotation of annotations.values()) annotation.classList.remove("graph-annotation--visible");
+      for (const annotation of annotations.values()) {
+        annotation.classList.remove("graph-annotation--visible");
+        setAnnotationSelected(annotation, false);
+      }
     };
-    const highlightNode = (id: string) => {
+    const highlightNode = (id: string, persistent = false) => {
       clearHighlight();
       nodeCircles.get(id)?.classList.add("graph-node--active");
-      annotations.get(id)?.classList.add("graph-annotation--visible");
+      const annotation = annotations.get(id);
+      annotation?.classList.add("graph-annotation--visible");
+      if (annotation) {
+        setAnnotationSelected(annotation, persistent);
+        if (persistent) annotationLayer.append(annotation);
+      }
       for (const neighborId of neighbors.get(id) ?? []) {
         nodeCircles.get(neighborId)?.classList.add("graph-node--related");
         annotations.get(neighborId)?.classList.add("graph-annotation--visible");
@@ -416,10 +498,24 @@ const cycles = dependencyCycles(snapshot);
         }
       }
     };
+    const restoreSelection = () => {
+      if (selectedId && nodeCircles.has(selectedId)) highlightNode(selectedId, true);
+      else clearHighlight();
+    };
+    camera.setTouchTapHandler((id) => {
+      selectedId = id && nodeCircles.has(id) ? id : null;
+      restoreSelection();
+    });
     for (const [id, circle] of nodeCircles) {
       const host = circle.parentElement;
-      host?.addEventListener("pointerenter", () => highlightNode(id));
-      host?.addEventListener("pointerleave", clearHighlight);
+      host?.addEventListener("pointerenter", (event) => {
+        if (event.pointerType === "mouse") highlightNode(id);
+      });
+      host?.addEventListener("pointerleave", (event) => {
+        if (event.pointerType === "mouse") restoreSelection();
+      });
+      host?.addEventListener("focus", () => highlightNode(id, selectedId === id));
+      host?.addEventListener("blur", restoreSelection);
     }
   }
   document.querySelectorAll<HTMLElement>("[data-graph]").forEach((root) => {

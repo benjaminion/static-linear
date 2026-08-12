@@ -17,6 +17,18 @@ describe("dependency graph camera", () => {
     expect(maximum).toMatchObject({ width: 250, height: 150 });
   });
 
+  it("supports a configurable 8x maximum for touch-first devices", () => {
+    const maximum = zoomGraphCamera(base, base, 10, undefined, 8);
+    expect(graphZoom(base, maximum)).toBe(8);
+    expect(maximum).toMatchObject({ width: 125, height: 75 });
+    expect(panGraphCamera(base, maximum, 10_000, 10_000, 8)).toMatchObject({
+      x: 875,
+      y: 425,
+      width: 125,
+      height: 75,
+    });
+  });
+
   it("keeps the requested graph point anchored while zooming", () => {
     const camera = zoomGraphCamera(base, base, 2, { x: 250, y: 50 });
     expect(camera).toEqual({ x: 125, y: -25, width: 500, height: 300 });
