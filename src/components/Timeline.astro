@@ -35,6 +35,12 @@ function projectBarClass(statusType: string): string {
   </div>
   <div class="timeline-scroll" tabindex="0" aria-label="Scrollable project timeline">
     <div class="timeline-canvas" data-timeline-canvas>
+      <!-- Full-height column grid; shares tick positions with the header. -->
+      <div class="timeline-grid" data-timeline-grid aria-hidden="true"></div>
+      <div class="timeline-axis-row" aria-hidden="true">
+        <div class="timeline-label timeline-label--axis"></div>
+        <div class="timeline-axis" data-timeline-axis></div>
+      </div>
       {projects.map((project) => (
         <article class="timeline-row" data-project-row={project.id}>
           <div class="timeline-label">
@@ -58,6 +64,8 @@ function projectBarClass(statusType: string): string {
           </div>
         </article>
       ))}
+      <!-- Viewer-local "today"; positioned in JS. z-index keeps it behind bars. -->
+      <div class="timeline-today" data-today hidden title="Today"></div>
     </div>
   </div>
   <script is:inline type="application/json" data-timeline-data set:html={payload}></script>
@@ -67,6 +75,46 @@ function projectBarClass(statusType: string): string {
   interface TimelineProject { id: string; start: string | null; end: string | null }
   interface TimelineData { projects: TimelineProject[] }
   const DAY = 86_400_000;
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+  function utcDay(year: number, month: number, day = 1): number {
+    return Date.UTC(year, month, day);
+  }
+
+  function monthTicks(min: number, max: number): number[] {
+    const start = new Date(min);
+    let year = start.getUTCFullYear();
+    let month = start.getUTCMonth();
+    let cursor = utcDay(year, month, 1);
+    const ticks: number[] = [];
+    while (cursor <= max) {
+      if (cursor >= min - DAY) ticks.push(cursor);
+      month += 1;
+      if (month > 11) {
+        month = 0;
+        year += 1;
+      }
+      cursor = utcDay(year, month, 1);
+    }
+    return ticks;
+  }
+
+  function viewerTodayUtc(): number {
+    const now = new Date();
+    return utcDay(now.getFullYear(), now.getMonth(), now.getDate());
+  }
+
+  /** Same tick set for header labels and body grid lines. */
+  function visibleMonthTicks(allTicks: number[], width: number, span: number): number[] {
+    const avgMonthMs = (365.25 / 12) * DAY;
+    const pxPerMonth = width / Math.max(span / avgMonthMs, 1);
+    const step = pxPerMonth < 22 ? 3 : pxPerMonth < 34 ? 2 : 1;
+    return allTicks.filter((time, index) => {
+      const month = new Date(time).getUTCMonth();
+      return index % step === 0 || month === 0;
+    });
+  }
+
   function drawTimeline(root: HTMLElement) {
     const dataNode = root.querySelector<HTMLScriptElement>("[data-timeline-data]");
     const data = JSON.parse(dataNode?.textContent || "{}") as TimelineData;
@@ -82,9 +130,19 @@ function projectBarClass(statusType: string): string {
     const scale = root.querySelector<HTMLSelectElement>("[data-scale]")?.value ?? "comfortable";
     const width = scale === "compact" ? 720 : scale === "expanded" ? 1600 : 1100;
     const canvas = root.querySelector<HTMLElement>("[data-timeline-canvas]");
-    if (!canvas) return;
+    const axis = root.querySelector<HTMLElement>("[data-timeline-axis]");
+    const grid = root.querySelector<HTMLElement>("[data-timeline-grid]");
+    const todayEl = root.querySelector<HTMLElement>("[data-today]");
+    if (!canvas || !axis || !grid) return;
     canvas.style.setProperty("--track-width", `${width}px`);
-    const percent = (date: string) => ((new Date(`${date}T00:00:00Z`).getTime() - min) / span) * 100;
+
+    const labelWidth = root.querySelector(".timeline-label")?.getBoundingClientRect().width
+      ?? (window.matchMedia("(max-width: 720px)").matches ? 180 : 220);
+    canvas.style.setProperty("--label-width", `${labelWidth}px`);
+
+    const percentFromTime = (time: number) => ((time - min) / span) * 100;
+    const percent = (date: string) => percentFromTime(new Date(`${date}T00:00:00Z`).getTime());
+
     root.querySelectorAll<HTMLElement>("[data-start][data-end]").forEach((bar) => {
       const start = percent(bar.dataset.start ?? "");
       const end = percent(bar.dataset.end ?? "");
@@ -94,7 +152,89 @@ function projectBarClass(statusType: string): string {
     root.querySelectorAll<HTMLElement>("[data-date]").forEach((marker) => {
       marker.style.left = `${percent(marker.dataset.date ?? "")}%`;
     });
+
+    const ticks = visibleMonthTicks(monthTicks(min, max), width, span);
+
+    // Header: year bands + month labels centered in each column (table-style).
+    axis.replaceChildren();
+    const yearsLayer = document.createElement("div");
+    yearsLayer.className = "timeline-axis__years";
+    const monthsLayer = document.createElement("div");
+    monthsLayer.className = "timeline-axis__months";
+    axis.append(yearsLayer, monthsLayer);
+
+    const firstYear = new Date(min).getUTCFullYear();
+    const lastYear = new Date(max).getUTCFullYear();
+    for (let year = firstYear; year <= lastYear; year += 1) {
+      const yearStart = Math.max(min, utcDay(year, 0, 1));
+      const yearEnd = Math.min(max, utcDay(year + 1, 0, 1));
+      if (yearEnd <= yearStart) continue;
+      const left = percentFromTime(yearStart);
+      const bandWidth = percentFromTime(yearEnd) - left;
+      if (bandWidth < 1.2) continue;
+      const band = document.createElement("div");
+      band.className = "timeline-year";
+      band.style.left = `${left}%`;
+      band.style.width = `${bandWidth}%`;
+      const yearLabel = document.createElement("span");
+      yearLabel.className = "timeline-year__label";
+      yearLabel.textContent = String(year);
+      band.append(yearLabel);
+      yearsLayer.append(band);
+    }
+
+    // Column edges: each visible tick, plus the right edge of the range.
+    const boundaries = [...ticks];
+    if (!boundaries.length || percentFromTime(boundaries[boundaries.length - 1]) < 99.5) {
+      boundaries.push(max);
+    }
+
+    grid.replaceChildren();
+    for (let index = 0; index < boundaries.length; index += 1) {
+      const time = boundaries[index];
+      const left = percentFromTime(time);
+      if (left < -0.5 || left > 100.5) continue;
+      const isJan = time !== max
+        && new Date(time).getUTCMonth() === 0
+        && new Date(time).getUTCDate() === 1;
+
+      // Full-height body grid line (same left % as header column edges).
+      const line = document.createElement("div");
+      line.className = isJan ? "timeline-grid-line timeline-grid-line--year" : "timeline-grid-line";
+      line.style.left = `${left}%`;
+      grid.append(line);
+
+      // Month header cell between this boundary and the next (table header cell).
+      if (index >= boundaries.length - 1 || time === max) continue;
+      const next = boundaries[index + 1];
+      const cellLeft = left;
+      const cellWidth = percentFromTime(next) - cellLeft;
+      if (cellWidth < 0.4) continue;
+      const cell = document.createElement("div");
+      cell.className = isJan ? "timeline-month-cell timeline-month-cell--year" : "timeline-month-cell";
+      cell.style.left = `${cellLeft}%`;
+      cell.style.width = `${cellWidth}%`;
+      const label = document.createElement("span");
+      label.className = "timeline-month-cell__label";
+      label.textContent = MONTHS[new Date(time).getUTCMonth()];
+      cell.append(label);
+      monthsLayer.append(cell);
+    }
+
+    // Today line: viewer's local calendar date, not build time.
+    if (todayEl) {
+      const todayPct = percentFromTime(viewerTodayUtc());
+      if (todayPct >= 0 && todayPct <= 100) {
+        todayEl.hidden = false;
+        todayEl.style.left = `${labelWidth + (todayPct / 100) * width}px`;
+        const iso = new Date(viewerTodayUtc()).toISOString().slice(0, 10);
+        todayEl.title = `Today (${iso})`;
+      } else {
+        todayEl.hidden = true;
+      }
+    }
   }
+
   document.querySelectorAll<HTMLElement>("[data-timeline]").forEach((root) => {
     drawTimeline(root);
     root.querySelector<HTMLSelectElement>("[data-scale]")?.addEventListener("change", () => drawTimeline(root));
