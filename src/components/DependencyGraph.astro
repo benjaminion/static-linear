@@ -44,6 +44,10 @@ const cycles = dependencyCycles(snapshot);
         {projects.map((project) => <option value={project.id}>{project.name}</option>)}
       </select>
     </label>
+    <button class="graph-toggle" type="button" aria-pressed="true" data-show-done>
+      <span class="graph-toggle__dot" aria-hidden="true"></span>
+      <span data-done-label>Hide Done</span>
+    </button>
     <button class="button button--secondary" type="button" data-reset-graph>Reset view</button>
   </div>
   <svg class="dependency-graph" viewBox="0 0 1000 600" role="img" aria-label="Blocking issue dependency graph" data-graph-svg>
@@ -91,6 +95,11 @@ const cycles = dependencyCycles(snapshot);
     return "graph-node graph-node--started";
   }
 
+  function isDoneNode(node: GraphNode): boolean {
+    const type = (node.statusType ?? "").toLowerCase();
+    return type === "completed" || type === "canceled";
+  }
+
   function createAnnotation(node: GraphNode, x: number, y: number): SVGGElement {
     const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
     group.setAttribute("class", "graph-annotation");
@@ -132,11 +141,24 @@ const cycles = dependencyCycles(snapshot);
     const dataNode = root.querySelector<HTMLScriptElement>("[data-graph-data]");
     const all = JSON.parse(dataNode?.textContent || "{}") as GraphData;
     const project = root.querySelector<HTMLSelectElement>("[data-graph-project]")?.value ?? "";
+    const showDone = root.querySelector<HTMLButtonElement>("[data-show-done]")?.getAttribute("aria-pressed") !== "false";
     const visibleIds = new Set<string>(
       all.nodes.filter((node) => !project || node.projectId === project).map((node) => node.id),
     );
-    const edges = all.edges.filter((edge) => visibleIds.has(edge.source) || visibleIds.has(edge.target));
-    for (const edge of edges) { visibleIds.add(edge.source); visibleIds.add(edge.target); }
+    const projectEdges = all.edges.filter((edge) => visibleIds.has(edge.source) || visibleIds.has(edge.target));
+    for (const edge of projectEdges) { visibleIds.add(edge.source); visibleIds.add(edge.target); }
+    if (!showDone) {
+      for (const node of all.nodes) {
+        if (isDoneNode(node)) visibleIds.delete(node.id);
+      }
+    }
+    const edges = projectEdges.filter((edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target));
+    if (!showDone) {
+      const connectedIds = new Set(edges.flatMap((edge) => [edge.source, edge.target]));
+      for (const id of visibleIds) {
+        if (!connectedIds.has(id)) visibleIds.delete(id);
+      }
+    }
     const nodes = all.nodes.filter((node) => visibleIds.has(node.id));
     const svg = root.querySelector<SVGSVGElement>("[data-graph-svg]");
     const nodeLayer = svg?.querySelector<SVGGElement>("[data-nodes]");
@@ -231,9 +253,20 @@ const cycles = dependencyCycles(snapshot);
   document.querySelectorAll<HTMLElement>("[data-graph]").forEach((root) => {
     renderGraph(root);
     const projectFilter = root.querySelector<HTMLSelectElement>("[data-graph-project]");
+    const doneToggle = root.querySelector<HTMLButtonElement>("[data-show-done]");
+    const doneLabel = doneToggle?.querySelector<HTMLElement>("[data-done-label]");
+    const setDoneVisibility = (visible: boolean) => {
+      doneToggle?.setAttribute("aria-pressed", String(visible));
+      if (doneLabel) doneLabel.textContent = visible ? "Hide Done" : "Show Done";
+    };
     projectFilter?.addEventListener("change", () => renderGraph(root));
+    doneToggle?.addEventListener("click", () => {
+      setDoneVisibility(doneToggle.getAttribute("aria-pressed") !== "true");
+      renderGraph(root);
+    });
     root.querySelector<HTMLButtonElement>("[data-reset-graph]")?.addEventListener("click", () => {
       if (projectFilter) projectFilter.value = "";
+      setDoneVisibility(true);
       renderGraph(root);
     });
   });

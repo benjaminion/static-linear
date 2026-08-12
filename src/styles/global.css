@@ -130,6 +130,11 @@ p { line-height: 1.55; }
 .missing-range { position: absolute; top: 1.3rem; left: 1.5rem; color: var(--muted); font-size: .68rem; }
 
 .graph-shell { padding: .7rem; border: 1px solid var(--line); background: var(--surface); box-shadow: var(--shadow); }
+.graph-toggle { display: inline-flex; align-items: center; justify-content: center; gap: .4rem; width: 7.25rem; min-height: 2.2rem; padding: .45rem .65rem; border: 1px solid var(--line); border-radius: 2px; background: var(--surface); color: var(--ink); font-size: .75rem; font-weight: 600; transition: border-color .15s ease, color .15s ease, opacity .15s ease; }
+.graph-toggle:hover { border-color: var(--ink); }
+.graph-toggle__dot { width: .65rem; height: .65rem; border: 2px solid #8b918c; border-radius: 50%; background: #e6e7e4; }
+.graph-toggle[aria-pressed="false"] { color: var(--muted); opacity: .65; }
+.graph-toggle[aria-pressed="false"] .graph-toggle__dot { background: transparent; }
 .dependency-graph { display: block; width: 100%; max-height: 64vh; min-height: 18rem; border: 1px solid #eceee9; background: radial-gradient(circle, #dfe3dc 1px, transparent 1px); background-size: 18px 18px; }
 .graph-node { fill: var(--teal-soft); stroke: var(--teal); stroke-width: 2; transition: stroke-width .12s ease; }
 .graph-node--todo { fill: #d9e6f7; stroke: #3a6ea8; }
