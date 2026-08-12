@@ -37,7 +37,8 @@ constraints, verification commands), see `AGENTS.md`.
 - `npx astro preview` — serve the production output.
 - `npm run sync` — refresh and validate the snapshot without building.
 - `npm run build:cached` — build offline from the last valid snapshot.
-- `npm run deploy` — refresh from Linear, build, and deploy the static output to Cloudflare.
+- `npm run deploy` — deploy the existing `dist/` output to Cloudflare without rebuilding or contacting Linear.
+- `npm run deploy:rebuild` — refresh from Linear, rebuild `dist/`, and deploy it to Cloudflare.
 - `npm test` — run the automated test suite.
 
 For API maintenance, download Linear's public `schema.graphql` and run
