@@ -11,8 +11,24 @@ Requires Node.js 22 or later.
 3. Run `npm install`.
 
 The homepage “About this initiative” section uses the initiative description/body
-from Linear, sanitized at sync time. Hyperlinks whose visible text ends in `*` are
-rendered as plain text (publication marker), same as other Linear Markdown.
+from Linear (`content` falling back to `description`), sanitized at sync time.
+Hyperlinks whose visible text ends in `*` are rendered as plain text (publication
+marker), same as other Linear Markdown.
+
+For contributor/agent conventions (dependency graph layout rules, timeline
+constraints, verification commands), see `AGENTS.md`.
+
+### Main pages
+
+- **Home** — initiative summary, Linear about body, latest update, project cards.
+- **Timeline** — project date ranges and milestones only (no issue markers or
+  dependency arrows). Bar colour reflects project status. Header months/years and
+  vertical grid share the same calendar columns; a dashed orange “today” line is
+  drawn client-side from the viewer’s local date.
+- **Dependencies** — blocking graph with date-ordered X placement, status-coloured
+  nodes, hover highlights, and title/due-date chips. Layout lives in
+  `src/lib/dependency-layout.ts`.
+- **Projects / issues / search** — detail and discovery views over the snapshot.
 
 ## Commands
 
