@@ -10,13 +10,9 @@ Requires Node.js 22 or later.
 2. Set `LINEAR_API_KEY` and the initiative's UUID (`Copy model UUID` in Linear's command menu).
 3. Run `npm install`.
 
-Edit `content/initiative-overview.md` to provide the public copy shown under
-“About this initiative”. This local file replaces the longer initiative body in Linear;
-that Linear field is not fetched or written to the public snapshot.
-
-To seed that file once from the current Linear body, run
-`npm run pull:initiative-overview`. The helper overwrites the placeholder atomically;
-normal builds never fetch this field.
+The homepage “About this initiative” section uses the initiative description/body
+from Linear, sanitized at sync time. Hyperlinks whose visible text ends in `*` are
+rendered as plain text (publication marker), same as other Linear Markdown.
 
 ## Commands
 

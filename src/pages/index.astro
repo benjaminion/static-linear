@@ -1,7 +1,6 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
 import Metric from "../components/Metric.astro";
-import { readLocalMarkdown } from "../lib/local-content";
 import { readSnapshot } from "../lib/snapshot";
 import { formatDate, formatDateTime, initiativeProjects, projectHref, statusClass } from "../lib/view";
 
@@ -10,7 +9,7 @@ const projects = initiativeProjects(snapshot);
 const issues = Object.values(snapshot.issues);
 const completed = issues.filter((issue) => ["completed", "canceled"].includes(issue.state.type)).length;
 const blockedIds = new Set(snapshot.relations.filter((relation) => relation.type === "blocks").map((relation) => relation.targetId));
-const initiativeOverview = await readLocalMarkdown("content/initiative-overview.md");
+const initiativeOverview = snapshot.initiative.descriptionHtml;
 ---
 
 <BaseLayout title={`${snapshot.initiative.name} · Overview`} description={snapshot.initiative.summary} generatedAt={snapshot.generatedAt}>

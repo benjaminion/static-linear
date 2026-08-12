@@ -10,7 +10,6 @@
     "deploy": "npm run build && wrangler deploy",
     "preview": "astro preview",
     "sync": "tsx scripts/sync.ts",
-    "pull:initiative-overview": "tsx scripts/pull-initiative-overview.ts",
     "check": "astro check",
     "test": "vitest run",
     "test:watch": "vitest"

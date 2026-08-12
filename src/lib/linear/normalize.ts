@@ -40,7 +40,7 @@ export interface RawIssue {
   inverseRelations: RawConnection<RawRelation>;
 }
 export interface RawInitiative {
-  id: string; name: string; url: string; description?: string | null;
+  id: string; name: string; url: string; description?: string | null; content?: string | null;
   status: string; health?: string | null;
   targetDate?: string | null; organization?: { urlKey: string } | null;
   lastUpdate?: RawStatusUpdate | null;
@@ -153,7 +153,8 @@ export function normalizeSnapshot(input: {
       name: input.initiative.name,
       url: input.initiative.url,
       summary: input.initiative.description ?? "",
-      descriptionHtml: "",
+      // Same pipeline as other Linear Markdown: sanitize + strip links whose text ends in `*`.
+      descriptionHtml: renderPublicMarkdown(input.initiative.content || input.initiative.description),
       status: input.initiative.status,
       health: input.initiative.health ?? null,
       targetDate: input.initiative.targetDate ?? null,

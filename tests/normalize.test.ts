@@ -61,5 +61,27 @@ describe("normalizeSnapshot", () => {
     two.relations.nodes.push({ id: "r2", type: "blocks", issue: { id: "two" }, relatedIssue: { id: "one" } });
     expect(dependencyCycles(normalize([one, two]))).toHaveLength(1);
   });
+
+  it("renders the initiative body into descriptionHtml and strips starred links", () => {
+    const snapshot = normalizeSnapshot({
+      initiativeId: "initiative-1",
+      generatedAt: "2026-01-03T00:00:00Z",
+      initiative: {
+        id: "initiative-1",
+        name: "Initiative",
+        url: "https://linear.app/acme/initiative/one",
+        status: "Active",
+        description: "Short summary",
+        content: "Full about. See [private notes*](https://example.com/secret).",
+      },
+      projects: [rawProject()],
+      issues: [rawIssue("one", "ACME-1")],
+    });
+    expect(snapshot.initiative.summary).toBe("Short summary");
+    expect(snapshot.initiative.descriptionHtml).toContain("Full about.");
+    expect(snapshot.initiative.descriptionHtml).toContain("private notes");
+    expect(snapshot.initiative.descriptionHtml).not.toContain("private notes*");
+    expect(snapshot.initiative.descriptionHtml).not.toContain("https://example.com/secret");
+  });
 });
 

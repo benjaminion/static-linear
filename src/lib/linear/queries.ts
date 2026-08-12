@@ -16,6 +16,7 @@ export const INITIATIVE_QUERY = /* GraphQL */ `
       name
       url
       description
+      content
       status
       health
       targetDate

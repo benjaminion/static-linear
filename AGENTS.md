@@ -14,10 +14,9 @@ runtime API access and must never receive the Linear API key.
 - Preserve the compact presentation and the existing colour scheme unless asked.
 - The top navigation intentionally has no product name or logo placeholder.
 - Project pages intentionally omit the Issues/Completed/Milestones metric row.
-- `content/initiative-overview.md` is user-authored public copy for the homepage.
-  Normal sync/builds must not replace it or fetch the initiative description.
-  `npm run pull:initiative-overview` is a temporary, explicitly invoked seeding
-  helper and overwrites that file, so do not run it unless the user asks.
+- The homepage “About this initiative” section uses the initiative body from the
+  public snapshot (`initiative.descriptionHtml`), rendered from Linear Markdown
+  with the usual sanitization and starred-link stripping.
 
 ## Data flow and privacy
 
@@ -32,7 +31,7 @@ runtime API access and must never receive the Linear API key.
   sanitize Linear Markdown through `src/lib/markdown.ts`; do not render raw HTML.
 - In Linear-sourced Markdown, a hyperlink whose visible text ends in `*` is a
   publication marker: render its text without the link and remove the final `*`.
-  This rule does not apply to local Markdown such as the initiative overview.
+  This applies to the initiative about body as well as issues, projects, and comments.
 - Private Linear-hosted images are replaced with a safe placeholder, and email
   addresses are redacted by the shared Markdown renderer.
 
@@ -63,5 +62,4 @@ build above, and `git diff --check`. Never depend on live Linear access for test
 - Add or update fixture-backed tests when changing extraction, normalization,
   Markdown safety, snapshot shape, or view helpers.
 - Do not edit generated `dist/` or `.cache/` artifacts as source files.
-- Preserve user edits in `content/initiative-overview.md` and unrelated worktree
-  changes.
+- Preserve unrelated worktree changes.
