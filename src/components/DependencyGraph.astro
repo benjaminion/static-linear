@@ -1,6 +1,14 @@
 ---
 import type { PublicSnapshot } from "../lib/schema";
-import { blockingRelations, compareDependencyIssues, dependencyCycles, initiativeProjects, issueHref, serializeForScript } from "../lib/view";
+import {
+  blockingRelations,
+  compareDependencyIssues,
+  dependencyCycles,
+  dependencyIssueDate,
+  initiativeProjects,
+  issueHref,
+  serializeForScript,
+} from "../lib/view";
 
 interface Props { snapshot: PublicSnapshot }
 const { snapshot } = Astro.props;
@@ -12,6 +20,7 @@ const nodes = endpointIds.map((id) => ({
   id,
   label: snapshot.issues[id]?.identifier ?? snapshot.boundaries[id]?.label ?? "Unknown",
   title: snapshot.issues[id]?.title ?? "Dependency outside this initiative",
+  dueDate: dependencyIssueDate(id, snapshot),
   href: snapshot.issues[id] ? issueHref(snapshot.issues[id]) : null,
   projectId: snapshot.issues[id]?.projectId ?? null,
 }));
@@ -42,6 +51,7 @@ const cycles = dependencyCycles(snapshot);
     </defs>
     <g data-edges></g>
     <g data-nodes></g>
+    <g data-annotations></g>
   </svg>
   {relations.length === 0 && <p class="empty-state">No blocking relationships were found in this initiative.</p>}
   <script is:inline type="application/json" data-graph-data set:html={graphData}></script>
@@ -50,9 +60,62 @@ const cycles = dependencyCycles(snapshot);
 <script>
   import { layoutDependencyNodes, routeDependencyEdges } from "../lib/dependency-layout";
 
-  interface GraphNode { id: string; label: string; title: string; href: string | null; projectId: string | null }
+  interface GraphNode {
+    id: string;
+    label: string;
+    title: string;
+    dueDate: string | null;
+    href: string | null;
+    projectId: string | null;
+  }
   interface GraphEdge { source: string; target: string }
   interface GraphData { nodes: GraphNode[]; edges: GraphEdge[] }
+
+  const NODE_RADIUS = 28;
+  const ANNOTATION_HEIGHT = 38;
+  const ANNOTATION_GAP = 10;
+
+  function truncateLabel(value: string, max: number): string {
+    return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+  }
+
+  function createAnnotation(node: GraphNode, x: number, y: number): SVGGElement {
+    const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    group.setAttribute("class", "graph-annotation");
+    group.setAttribute("data-annotation-for", node.id);
+
+    const titleLine = truncateLabel(node.title, 44);
+    const dateLine = node.dueDate ? `Due ${node.dueDate}` : "No date";
+    const width = Math.min(240, Math.max(112, Math.max(titleLine.length, dateLine.length) * 6.1 + 18));
+    const cardY = y - NODE_RADIUS - ANNOTATION_GAP - ANNOTATION_HEIGHT;
+    const cardX = x - width / 2;
+
+    const card = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    card.setAttribute("class", "graph-annotation__card");
+    card.setAttribute("x", String(cardX));
+    card.setAttribute("y", String(cardY));
+    card.setAttribute("width", String(width));
+    card.setAttribute("height", String(ANNOTATION_HEIGHT));
+    card.setAttribute("rx", "6");
+
+    const titleText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    titleText.setAttribute("class", "graph-annotation__title");
+    titleText.setAttribute("x", String(x));
+    titleText.setAttribute("y", String(cardY + 15));
+    titleText.setAttribute("text-anchor", "middle");
+    titleText.textContent = titleLine;
+
+    const dateText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    dateText.setAttribute("class", "graph-annotation__date");
+    dateText.setAttribute("x", String(x));
+    dateText.setAttribute("y", String(cardY + 29));
+    dateText.setAttribute("text-anchor", "middle");
+    dateText.textContent = dateLine;
+
+    group.append(card, titleText, dateText);
+    return group;
+  }
+
   function renderGraph(root: HTMLElement) {
     const dataNode = root.querySelector<HTMLScriptElement>("[data-graph-data]");
     const all = JSON.parse(dataNode?.textContent || "{}") as GraphData;
@@ -66,11 +129,15 @@ const cycles = dependencyCycles(snapshot);
     const svg = root.querySelector<SVGSVGElement>("[data-graph-svg]");
     const nodeLayer = svg?.querySelector<SVGGElement>("[data-nodes]");
     const edgeLayer = svg?.querySelector<SVGGElement>("[data-edges]");
-    if (!svg || !nodeLayer || !edgeLayer) return;
-    nodeLayer.replaceChildren(); edgeLayer.replaceChildren();
+    const annotationLayer = svg?.querySelector<SVGGElement>("[data-annotations]");
+    if (!svg || !nodeLayer || !edgeLayer || !annotationLayer) return;
+    nodeLayer.replaceChildren();
+    edgeLayer.replaceChildren();
+    annotationLayer.replaceChildren();
     const nodeLayout = layoutDependencyNodes(nodes.map((node) => node.id), edges);
     const positions = new Map(nodeLayout.nodes.map(({ id, x, y }) => [id, { x, y }]));
     const nodeCircles = new Map<string, SVGCircleElement>();
+    const annotations = new Map<string, SVGGElement>();
     const neighbors = new Map<string, Set<string>>();
     for (const edge of edges) {
       if (!neighbors.has(edge.source)) neighbors.set(edge.source, new Set());
@@ -85,15 +152,20 @@ const cycles = dependencyCycles(snapshot);
       link.setAttribute("data-node-id", node.id);
       if (node.href) link.setAttribute("href", node.href);
       const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-      circle.setAttribute("cx", String(x)); circle.setAttribute("cy", String(y)); circle.setAttribute("r", "28");
+      circle.setAttribute("cx", String(x)); circle.setAttribute("cy", String(y)); circle.setAttribute("r", String(NODE_RADIUS));
       circle.setAttribute("class", node.href ? "graph-node" : "graph-node graph-node--boundary");
       const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
       text.setAttribute("x", String(x)); text.setAttribute("y", String(y + 4)); text.setAttribute("text-anchor", "middle");
       text.textContent = node.label.length > 16 ? `${node.label.slice(0, 14)}…` : node.label;
       const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
-      title.textContent = `${node.label}: ${node.title}`;
+      const dateNote = node.dueDate ? ` · Due ${node.dueDate}` : " · No date";
+      title.textContent = `${node.label}: ${node.title}${dateNote}`;
       link.append(circle, text, title); nodeLayer.append(link);
       nodeCircles.set(node.id, circle);
+
+      const annotation = createAnnotation(node, x, y);
+      annotationLayer.append(annotation);
+      annotations.set(node.id, annotation);
     });
     const layout = routeDependencyEdges(
       [...positions].map(([id, position]) => ({ id, ...position })),
@@ -110,19 +182,27 @@ const cycles = dependencyCycles(snapshot);
       edgeLayer.append(path);
       edgePaths.push(path);
     });
-    svg.setAttribute("viewBox", `0 ${layout.minY} ${nodeLayout.width} ${layout.maxY - layout.minY}`);
+    const annotationTop = nodes.length
+      ? Math.min(...nodes.map((node) => positions.get(node.id)!.y - NODE_RADIUS - ANNOTATION_GAP - ANNOTATION_HEIGHT - 8))
+      : layout.minY;
+    const minY = Math.min(layout.minY, annotationTop);
+    const maxY = layout.maxY;
+    svg.setAttribute("viewBox", `0 ${minY} ${nodeLayout.width} ${maxY - minY}`);
 
     const clearHighlight = () => {
       for (const circle of nodeCircles.values()) {
         circle.classList.remove("graph-node--active", "graph-node--related");
       }
       for (const path of edgePaths) path.classList.remove("graph-edge--active");
+      for (const annotation of annotations.values()) annotation.classList.remove("graph-annotation--visible");
     };
     const highlightNode = (id: string) => {
       clearHighlight();
       nodeCircles.get(id)?.classList.add("graph-node--active");
+      annotations.get(id)?.classList.add("graph-annotation--visible");
       for (const neighborId of neighbors.get(id) ?? []) {
         nodeCircles.get(neighborId)?.classList.add("graph-node--related");
+        annotations.get(neighborId)?.classList.add("graph-annotation--visible");
       }
       for (const path of edgePaths) {
         if (path.dataset.source === id || path.dataset.target === id) {
