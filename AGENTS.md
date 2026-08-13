@@ -75,15 +75,19 @@ styles in `src/styles/global.css` (`.graph-*`).
 
 ### Hard layout constraints
 
-- **Date-monotonic X:** Nodes are ordered by the page via `compareDependencyIssues`
-  (`dueDate ?? project.targetDate`, undated last, then identifier). Layout places
-  `x` strictly from that input order. Do **not** reorder across different dates
-  for topological / layered flow. Same-date (or undated) ties may be refined only
-  if still monotonic on the date key.
+- **Date-monotonic X:** The page supplies each node's effective date from
+  `dependencyIssueDate` (`dueDate ?? project.targetDate`, undated last). Layout
+  sorts and places date groups strictly left-to-right. Do **not** reorder across
+  different dates for topological / layered flow. Same-date (or undated) ties are dependency-aware:
+  topologically order blockers before what they block so same-date arrows do not
+  run right-to-left (except where a same-date cycle makes that impossible), then
+  refine only within equal topological ranks.
 - **Y only optimizes vertical lanes** (with barycenter-style neighbor affinity).
   Prefer short chains to stay level; do not zig-zag adjacent hops without cause.
+  The balanced optimizer may add at most two lanes beyond the base heuristic and
+  must never exceed ten lanes.
 - **Deterministic:** no random forces; keep fixture/unit tests for order, clearance,
-  and smoothness.
+  crossings, relation-input permutations, and smoothness.
 
 ### Edge routing
 
@@ -91,8 +95,9 @@ styles in `src/styles/global.css` (`.graph-*`).
 - Fall back to multi-segment rail detours with **G1 (smooth) joins** — climb and
   descend must share horizontal tangents with the rail (no visible corners).
 - Score paths on clearance first, then length, mid-path drift from the chord, and
-  joint smoothness. Dense collinear spines need multi-segment rails; single elevated
-  cubics alone cannot clear near-endpoint obstacles.
+  joint smoothness. Select routes globally with penalties for non-incident crossings
+  and near-overlap, then use bounded refinement. Dense collinear spines need
+  multi-segment rails; single elevated cubics alone cannot clear near-endpoint obstacles.
 - Attachment is **directional on the rim** (not only left/right sides).
 
 ### Presentation / interaction
@@ -102,6 +107,17 @@ styles in `src/styles/global.css` (`.graph-*`).
   (`.graph-node--done`); external boundaries stay dashed (`.graph-node--boundary`).
 - Hover: thicken the hovered node, incident edges, and immediate neighbors; show
   SVG annotation chips (title + due date from `dependencyIssueDate`) for that set.
+- Precompute exactly three layouts at build time (`all`, `dependent`, `inflight`).
+  Do not run the layout optimizer on view or project changes in the browser, and do
+  not generate separate layouts per project.
+- Project selection is a focus treatment over the current issue-mode SVG: preserve
+  geometry and camera, dim non-member nodes and edges wholly between non-members,
+  and leave internal plus inbound/outbound project edges at normal opacity. Edges
+  with exactly one project endpoint are dashed, including while highlighted.
+- With a project selected, hover/focus/touch highlighting may start only from a
+  project member. Its immediate non-member neighbors temporarily return to normal
+  opacity and retain the standard related-node highlight; unrelated non-members
+  remain dimmed.
 - Graph payload fields of note: `dueDate`, `statusType`, plus existing label/title/href.
 
 ## Timeline
@@ -132,7 +148,8 @@ Code: `src/components/Timeline.astro`, styles `.timeline-*` / `.project-bar*` in
   short of the visible edge while the canvas stretches with `min-width: 100%`.
 - **Today** line: orange dashed (`var(--accent)`), positioned from the **viewer’s
   local calendar date** in client JS (`new Date()`), not build time. `z-index`
-  below project bars so the line passes behind them. Hide if outside the range.
+  below project bars so the line passes behind them. Keep it visibly heavier than
+  the calendar grid (currently a 2.5px border). Hide if outside the range.
 
 ## Notable paths
 

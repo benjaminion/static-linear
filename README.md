@@ -23,11 +23,14 @@ constraints, verification commands), see `AGENTS.md`.
 - **Home** — initiative summary, Linear about body, latest update, project cards.
 - **Timeline** — project date ranges and milestones only (no issue markers or
   dependency arrows). Bar colour reflects project status. Header months/years and
-  vertical grid share the same calendar columns; a dashed orange “today” line is
-  drawn client-side from the viewer’s local date.
+  vertical grid share the same calendar columns; a prominent dashed orange “today”
+  line is drawn client-side from the viewer’s local date.
 - **Dependencies** — blocking graph with date-ordered X placement, status-coloured
-  nodes, hover highlights, and title/due-date chips. Layout lives in
-  `src/lib/dependency-layout.ts`.
+  nodes, smooth obstacle-aware routes, hover highlights, and title/due-date chips.
+  The three issue-mode layouts are computed during the static build, so changing
+  views does not run the layout optimizer in the browser. Selecting a project keeps
+  the whole graph in place, dims unrelated nodes and edges, and dashes dependencies
+  that cross the project boundary. Layout lives in `src/lib/dependency-layout.ts`.
 - **Projects / issues / search** — detail and discovery views over the snapshot.
 
 ## Commands
