@@ -120,7 +120,7 @@ p { line-height: 1.55; }
 .timeline-month-cell--year { border-left-color: #c8cdc3; }
 .timeline-month-cell__label { color: var(--muted); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: .6rem; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
 .timeline-month-cell--year .timeline-month-cell__label { color: var(--ink); font-weight: 600; }
-.timeline-today { position: absolute; top: 0; bottom: 0; z-index: 1; width: 0; border-left: 1.5px dashed var(--accent); pointer-events: none; }
+.timeline-today { position: absolute; top: 0; bottom: 0; z-index: 1; width: 0; border-left: 2.5px dashed var(--accent); pointer-events: none; }
 .project-bar { position: absolute; top: 1.4rem; z-index: 2; height: .75rem; min-width: 5px; border-radius: 2px; }
 .project-bar--started { background: var(--teal); box-shadow: 0 3px 8px rgba(42, 117, 106, .2); }
 .project-bar--planned { background: #3a6ea8; box-shadow: 0 3px 8px rgba(58, 110, 168, .22); }
@@ -143,8 +143,10 @@ p { line-height: 1.55; }
 .dependency-graph--panning { cursor: grabbing; }
 .dependency-graph a { cursor: pointer; }
 .dependency-graph--panning a { cursor: grabbing; }
-.dependency-graph [data-node-id] { -webkit-tap-highlight-color: transparent; }
+.dependency-graph [data-node-id] { -webkit-tap-highlight-color: transparent; transition: opacity .12s ease; }
 .dependency-graph [data-node-id]:focus { outline: none; }
+.dependency-graph .graph-node-host--dimmed { opacity: .32; }
+.dependency-graph .graph-node-host--dimmed.graph-node-host--revealed { opacity: 1; }
 .graph-node { fill: var(--teal-soft); stroke: var(--teal); stroke-width: 2; transition: stroke-width .12s ease; }
 .graph-node--todo { fill: #d9e6f7; stroke: #3a6ea8; }
 .graph-node--started { fill: var(--teal-soft); stroke: var(--teal); }
@@ -154,6 +156,8 @@ p { line-height: 1.55; }
 .graph-node--related { stroke-width: 3.5; }
 .dependency-graph text { fill: var(--ink); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 11px; font-weight: 500; pointer-events: none; }
 .graph-edge { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; opacity: .7; transition: stroke-width .12s ease, opacity .12s ease; }
+.graph-edge--dimmed { opacity: .24; }
+.graph-edge--cross-project { stroke-dasharray: 5 6; }
 .graph-edge--active { stroke-width: 3; opacity: 1; }
 .graph-annotation { opacity: 0; pointer-events: none; transition: opacity .12s ease; }
 .graph-annotation--visible { opacity: 1; }

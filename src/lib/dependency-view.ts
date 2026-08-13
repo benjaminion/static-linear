@@ -1,7 +1,7 @@
 export type DependencyViewMode = "all" | "dependent" | "inflight";
 
-export function dependencyViewKey(mode: DependencyViewMode, projectId = ""): string {
-  return JSON.stringify([mode, projectId]);
+export function dependencyViewKey(mode: DependencyViewMode): string {
+  return mode;
 }
 
 export interface DependencyViewNode {
@@ -13,6 +13,30 @@ export interface DependencyViewNode {
 export interface DependencyViewEdge {
   source: string;
   target: string;
+}
+
+export function dependencyNodeMatchesProject(node: DependencyViewNode, projectId = ""): boolean {
+  return !projectId || node.projectId === projectId;
+}
+
+export function dependencyEdgeTouchesProject(
+  edge: DependencyViewEdge,
+  nodes: Map<string, DependencyViewNode>,
+  projectId = "",
+): boolean {
+  if (!projectId) return true;
+  return nodes.get(edge.source)?.projectId === projectId || nodes.get(edge.target)?.projectId === projectId;
+}
+
+export function dependencyEdgeCrossesProject(
+  edge: DependencyViewEdge,
+  nodes: Map<string, DependencyViewNode>,
+  projectId = "",
+): boolean {
+  if (!projectId) return false;
+  const sourceMatches = nodes.get(edge.source)?.projectId === projectId;
+  const targetMatches = nodes.get(edge.target)?.projectId === projectId;
+  return sourceMatches !== targetMatches;
 }
 
 export function filterDependencyView<

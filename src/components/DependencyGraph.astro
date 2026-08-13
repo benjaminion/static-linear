@@ -32,22 +32,13 @@ const nodes = endpointIds.map((id) => ({
 }));
 const edges = relations.map((relation) => ({ source: relation.sourceId, target: relation.targetId }));
 const layouts: Record<string, DependencyGraphLayout> = {};
-const layoutCache = new Map<string, DependencyGraphLayout>();
 const modes: DependencyViewMode[] = ["all", "dependent", "inflight"];
-for (const projectId of ["", ...projects.map((project) => project.id)]) {
-  for (const mode of modes) {
-    const view = filterDependencyView(nodes, edges, mode, projectId);
-    const signature = JSON.stringify([
-      view.nodes.map((node) => [node.id, node.dueDate]),
-      view.edges.map((edge) => [edge.source, edge.target]),
-    ]);
-    let layout = layoutCache.get(signature);
-    if (!layout) {
-      layout = layoutDependencyGraph(view.nodes.map((node) => ({ id: node.id, dateKey: node.dueDate })), view.edges);
-      layoutCache.set(signature, layout);
-    }
-    layouts[dependencyViewKey(mode, projectId)] = layout;
-  }
+for (const mode of modes) {
+  const view = filterDependencyView(nodes, edges, mode);
+  layouts[dependencyViewKey(mode)] = layoutDependencyGraph(
+    view.nodes.map((node) => ({ id: node.id, dateKey: node.dueDate })),
+    view.edges,
+  );
 }
 const graphData = serializeForScript({ nodes, edges, layouts });
 const cycles = dependencyCycles(snapshot);
@@ -105,7 +96,14 @@ const cycles = dependencyCycles(snapshot);
     type GraphViewBox,
   } from "../lib/dependency-camera";
   import type { DependencyGraphLayout } from "../lib/dependency-layout";
-  import { dependencyViewKey, filterDependencyView, type DependencyViewMode } from "../lib/dependency-view";
+  import {
+    dependencyEdgeCrossesProject,
+    dependencyEdgeTouchesProject,
+    dependencyNodeMatchesProject,
+    dependencyViewKey,
+    filterDependencyView,
+    type DependencyViewMode,
+  } from "../lib/dependency-view";
 
   interface GraphNode {
     id: string;
@@ -127,6 +125,7 @@ const cycles = dependencyCycles(snapshot);
     zoomBy: (factor: number) => void;
     setTouchTapHandler: (handler: (nodeId: string | null) => void) => void;
   }
+  interface GraphRenderController { applyProjectFocus: () => void }
 
   const NODE_RADIUS = 28;
   const ANNOTATION_HEIGHT = 38;
@@ -410,35 +409,35 @@ const cycles = dependencyCycles(snapshot);
     };
   }
 
-  function renderGraph(root: HTMLElement, camera: GraphCamera) {
+  function renderGraph(root: HTMLElement, camera: GraphCamera): GraphRenderController | null {
     const dataNode = root.querySelector<HTMLScriptElement>("[data-graph-data]");
     const all = JSON.parse(dataNode?.textContent || "{}") as GraphData;
-    const project = root.querySelector<HTMLSelectElement>("[data-graph-project]")?.value ?? "";
     const mode = (root.querySelector<HTMLSelectElement>("[data-graph-view]")?.value ?? "dependent") as DependencyViewMode;
-    const { nodes, edges } = filterDependencyView(all.nodes, all.edges, mode, project);
+    const { nodes, edges } = filterDependencyView(all.nodes, all.edges, mode);
     const svg = root.querySelector<SVGSVGElement>("[data-graph-svg]");
     const emptyState = root.querySelector<HTMLElement>("[data-graph-empty]");
     const nodeLayer = svg?.querySelector<SVGGElement>("[data-nodes]");
     const edgeLayer = svg?.querySelector<SVGGElement>("[data-edges]");
     const annotationLayer = svg?.querySelector<SVGGElement>("[data-annotations]");
-    if (!svg || !nodeLayer || !edgeLayer || !annotationLayer) return;
+    if (!svg || !nodeLayer || !edgeLayer || !annotationLayer) return null;
     svg.toggleAttribute("hidden", nodes.length === 0);
     if (emptyState) {
-      const scope = project ? "this project" : "this initiative";
       emptyState.hidden = nodes.length !== 0;
       emptyState.textContent = mode === "all"
-        ? `No issues were found for ${scope}.`
+        ? "No issues were found for this initiative."
         : mode === "dependent"
-          ? `No dependent issues were found for ${scope}.`
-          : `No inflight dependency relationships were found for ${scope}.`;
+          ? "No dependent issues were found for this initiative."
+          : "No inflight dependency relationships were found for this initiative.";
     }
     nodeLayer.replaceChildren();
     edgeLayer.replaceChildren();
     annotationLayer.replaceChildren();
-    const layout = all.layouts[dependencyViewKey(mode, project)];
-    if (!layout) return;
+    const layout = all.layouts[dependencyViewKey(mode)];
+    if (!layout) return null;
     const positions = new Map(layout.nodes.map(({ id, x, y }) => [id, { x, y }]));
+    const nodesById = new Map(nodes.map((node) => [node.id, node]));
     const nodeCircles = new Map<string, SVGCircleElement>();
+    const nodeHosts = new Map<string, SVGAElement>();
     const annotations = new Map<string, SVGGElement>();
     const neighbors = new Map<string, Set<string>>();
     for (const edge of edges) {
@@ -463,6 +462,7 @@ const cycles = dependencyCycles(snapshot);
       text.textContent = node.label.length > 16 ? `${node.label.slice(0, 14)}…` : node.label;
       link.append(circle, text); nodeLayer.append(link);
       nodeCircles.set(node.id, circle);
+      nodeHosts.set(node.id, link);
 
       const annotation = createAnnotation(node, x, y);
       annotationLayer.append(annotation);
@@ -487,10 +487,16 @@ const cycles = dependencyCycles(snapshot);
     camera.fit({ x: 0, y: minY, width: layout.width, height: maxY - minY });
 
     let selectedId: string | null = null;
+    const isProjectNodeActive = (id: string) => {
+      const selectedProject = root.querySelector<HTMLSelectElement>("[data-graph-project]")?.value ?? "";
+      const node = nodesById.get(id);
+      return node ? dependencyNodeMatchesProject(node, selectedProject) : false;
+    };
     const clearHighlight = () => {
       for (const circle of nodeCircles.values()) {
         circle.classList.remove("graph-node--active", "graph-node--related");
       }
+      for (const host of nodeHosts.values()) host.classList.remove("graph-node-host--revealed");
       for (const path of edgePaths) path.classList.remove("graph-edge--active");
       for (const annotation of annotations.values()) {
         annotation.classList.remove("graph-annotation--visible");
@@ -498,6 +504,7 @@ const cycles = dependencyCycles(snapshot);
       }
     };
     const highlightNode = (id: string, persistent = false) => {
+      if (!isProjectNodeActive(id)) return;
       clearHighlight();
       nodeCircles.get(id)?.classList.add("graph-node--active");
       const annotation = annotations.get(id);
@@ -508,6 +515,7 @@ const cycles = dependencyCycles(snapshot);
       }
       for (const neighborId of neighbors.get(id) ?? []) {
         nodeCircles.get(neighborId)?.classList.add("graph-node--related");
+        nodeHosts.get(neighborId)?.classList.add("graph-node-host--revealed");
         annotations.get(neighborId)?.classList.add("graph-annotation--visible");
       }
       for (const path of edgePaths) {
@@ -521,32 +529,49 @@ const cycles = dependencyCycles(snapshot);
       else clearHighlight();
     };
     camera.setTouchTapHandler((id) => {
-      selectedId = id && nodeCircles.has(id) ? id : null;
+      selectedId = id && nodeCircles.has(id) && isProjectNodeActive(id) ? id : null;
       restoreSelection();
     });
     for (const [id, circle] of nodeCircles) {
       const host = circle.parentElement;
       host?.addEventListener("pointerenter", (event) => {
-        if (event.pointerType === "mouse") highlightNode(id);
+        if (event.pointerType === "mouse" && isProjectNodeActive(id)) highlightNode(id);
       });
       host?.addEventListener("pointerleave", (event) => {
         if (event.pointerType === "mouse") restoreSelection();
       });
-      host?.addEventListener("focus", () => highlightNode(id, selectedId === id));
+      host?.addEventListener("focus", () => {
+        if (isProjectNodeActive(id)) highlightNode(id, selectedId === id);
+      });
       host?.addEventListener("blur", restoreSelection);
     }
+    const applyProjectFocus = () => {
+      const selectedProject = root.querySelector<HTMLSelectElement>("[data-graph-project]")?.value ?? "";
+      for (const [id, host] of nodeHosts) {
+        host.classList.toggle("graph-node-host--dimmed", !isProjectNodeActive(id));
+      }
+      for (const path of edgePaths) {
+        const edge = { source: path.dataset.source!, target: path.dataset.target! };
+        path.classList.toggle("graph-edge--dimmed", !dependencyEdgeTouchesProject(edge, nodesById, selectedProject));
+        path.classList.toggle("graph-edge--cross-project", dependencyEdgeCrossesProject(edge, nodesById, selectedProject));
+      }
+      if (selectedId && !isProjectNodeActive(selectedId)) selectedId = null;
+      restoreSelection();
+    };
+    applyProjectFocus();
+    return { applyProjectFocus };
   }
   document.querySelectorAll<HTMLElement>("[data-graph]").forEach((root) => {
     const camera = createGraphCamera(root);
-    renderGraph(root, camera);
+    let graph = renderGraph(root, camera);
     const projectFilter = root.querySelector<HTMLSelectElement>("[data-graph-project]");
     const viewFilter = root.querySelector<HTMLSelectElement>("[data-graph-view]");
-    projectFilter?.addEventListener("change", () => renderGraph(root, camera));
-    viewFilter?.addEventListener("change", () => renderGraph(root, camera));
+    projectFilter?.addEventListener("change", () => graph?.applyProjectFocus());
+    viewFilter?.addEventListener("change", () => { graph = renderGraph(root, camera); });
     root.querySelector<HTMLButtonElement>("[data-reset-graph]")?.addEventListener("click", () => {
       if (projectFilter) projectFilter.value = "";
       if (viewFilter) viewFilter.value = "dependent";
-      renderGraph(root, camera);
+      graph = renderGraph(root, camera);
     });
   });
 </script>
