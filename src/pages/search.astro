@@ -5,14 +5,14 @@ import { initiativeProjects, serializeForScript } from "../lib/view";
 const snapshot = await readSnapshot();
 const items = [
   ...initiativeProjects(snapshot).map((project) => ({ type: "Project", id: project.id, identifier: "", title: project.name, summary: project.summary, status: project.status.name, href: `/projects/${project.id}/` })),
-  ...Object.values(snapshot.issues).map((issue) => ({ type: "Issue", id: issue.id, identifier: issue.identifier, title: issue.title, summary: issue.descriptionHtml.replace(/<[^>]+>/g, " "), status: issue.state.name, href: `/issues/${issue.id}/` })),
+  ...Object.values(snapshot.issues).map((issue) => ({ type: "Task", id: issue.id, identifier: issue.identifier, title: issue.title, summary: issue.descriptionHtml.replace(/<[^>]+>/g, " "), status: issue.state.name, href: `/issues/${issue.id}/` })),
 ];
 const searchData = serializeForScript(items);
 ---
 <BaseLayout title={`Search · ${snapshot.initiative.name}`} generatedAt={snapshot.generatedAt}>
   <header class="page-header"><span class="eyebrow">Find work</span><h1>Search</h1><p>Search titles, identifiers, descriptions, and statuses in this snapshot.</p></header>
   <section class="search-shell" data-search>
-    <label class="search-box"><span class="sr-only">Search initiative</span><input type="search" placeholder="Try an issue ID, title, or status…" autocomplete="off" data-search-input /></label>
+    <label class="search-box"><span class="sr-only">Search initiative</span><input type="search" placeholder="Try a task ID, title, or status…" autocomplete="off" data-search-input /></label>
     <div class="search-summary" aria-live="polite" data-search-summary>{items.length} items</div>
     <ol class="search-results" data-search-results></ol>
     <script is:inline type="application/json" data-search-data set:html={searchData}></script>

@@ -29,7 +29,7 @@ const otherEndpoint = (relation: any) => relation.sourceId === issue.id ? relati
   <div class="detail-grid">
     <article class="detail-main">
       <section class="content-section prose"><div class="section-heading"><h2>Description</h2></div>{issue.descriptionHtml ? <div set:html={issue.descriptionHtml}></div> : <p class="empty-state">No description.</p>}</section>
-      {issue.childIds.length > 0 && <section class="content-section"><div class="section-heading"><h2>Sub-issues</h2></div><IssueTree issues={issue.childIds.map((id: string) => snapshot.issues[id]).filter(Boolean).sort(compareIssues)} snapshot={snapshot} /></section>}
+      {issue.childIds.length > 0 && <section class="content-section"><div class="section-heading"><h2>Sub-tasks</h2></div><IssueTree issues={issue.childIds.map((id: string) => snapshot.issues[id]).filter(Boolean).sort(compareIssues)} snapshot={snapshot} /></section>}
       <section class="content-section"><div class="section-heading"><div><span class="eyebrow">Discussion</span><h2>Comments</h2></div><span>{issue.comments.length}</span></div><div class="comments">{issue.comments.length ? issue.comments.map((comment: any) => <article class="comment"><header><strong>{comment.user?.name ?? "Deleted user"}</strong><time datetime={comment.createdAt}>{formatDateTime(comment.createdAt)}</time></header><div class="prose compact" set:html={comment.bodyHtml}></div></article>) : <p class="empty-state">No comments.</p>}</div></section>
     </article>
     <aside class="detail-sidebar">
@@ -39,4 +39,3 @@ const otherEndpoint = (relation: any) => relation.sourceId === issue.id ? relati
     </aside>
   </div>
 </BaseLayout>
-

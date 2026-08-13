@@ -59,11 +59,11 @@ const cycles = dependencyCycles(snapshot);
         {projects.map((project) => <option value={project.id}>{project.name}</option>)}
       </select>
     </label>
-    <label>Issues
+    <label>Tasks
       <select data-graph-view>
-        <option value="all">All issues</option>
-        <option value="dependent" selected>Dependent issues</option>
-        <option value="inflight">Inflight issues</option>
+        <option value="all">All tasks</option>
+        <option value="dependent" selected>Dependent tasks</option>
+        <option value="inflight">Inflight tasks</option>
       </select>
     </label>
     <div class="graph-zoom-controls" role="group" aria-label="Graph zoom controls">
@@ -74,8 +74,8 @@ const cycles = dependencyCycles(snapshot);
     </div>
     <button class="button button--secondary" type="button" data-reset-graph>Reset view</button>
   </div>
-  <p class="graph-help" id="dependency-graph-help">Scroll or pinch to zoom. Drag to pan. On touch, tap a node to inspect it, then use Open issue. Use +, −, arrow keys, or 0 when the graph is focused.</p>
-  <svg class="dependency-graph" viewBox="0 0 1000 600" role="img" aria-label="Blocking issue dependency graph" aria-describedby="dependency-graph-help" tabindex="0" data-graph-svg>
+  <p class="graph-help" id="dependency-graph-help">Scroll or pinch to zoom. Drag to pan. On touch, tap a node to inspect it, then use Open task. Use +, −, arrow keys, or 0 when the graph is focused.</p>
+  <svg class="dependency-graph" viewBox="0 0 1000 600" role="img" aria-label="Blocking task dependency graph" aria-describedby="dependency-graph-help" tabindex="0" data-graph-svg>
     <defs>
       <marker id="arrowhead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L10,4 L0,8 Z"></path></marker>
     </defs>
@@ -198,7 +198,7 @@ const cycles = dependencyCycles(snapshot);
       openText.setAttribute("x", String(x));
       openText.setAttribute("y", String(cardY + 29));
       openText.setAttribute("text-anchor", "middle");
-      openText.textContent = "Open issue →";
+      openText.textContent = "Open task →";
       openLink.append(openHitArea, openText);
       group.append(openLink);
     }
@@ -424,9 +424,9 @@ const cycles = dependencyCycles(snapshot);
     if (emptyState) {
       emptyState.hidden = nodes.length !== 0;
       emptyState.textContent = mode === "all"
-        ? "No issues were found for this initiative."
+        ? "No tasks were found for this initiative."
         : mode === "dependent"
-          ? "No dependent issues were found for this initiative."
+          ? "No dependent tasks were found for this initiative."
           : "No inflight dependency relationships were found for this initiative.";
     }
     nodeLayer.replaceChildren();

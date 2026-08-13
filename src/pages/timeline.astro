@@ -6,8 +6,8 @@ import { formatDate, initiativeProjects, projectHref } from "../lib/view";
 const snapshot = await readSnapshot();
 const projects = initiativeProjects(snapshot);
 ---
-<BaseLayout title={`Timeline · ${snapshot.initiative.name}`} generatedAt={snapshot.generatedAt}>
-  <header class="page-header"><span class="eyebrow">Roadmap</span><h1>Timeline</h1><p>Project date ranges and milestones. Bar colour reflects project status.</p></header>
+<BaseLayout title={`Projects · ${snapshot.initiative.name}`} generatedAt={snapshot.generatedAt}>
+  <header class="page-header"><span class="eyebrow">Roadmap</span><h1>Projects</h1><p>Project date ranges and milestones. Bar colour reflects project status.</p></header>
   <Timeline snapshot={snapshot} />
   <section class="content-section">
     <div class="section-heading"><div><span class="eyebrow">Accessible view</span><h2>Schedule table</h2></div></div>

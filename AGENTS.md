@@ -13,7 +13,10 @@ runtime API access and must never receive the Linear API key.
   server-side runtime. `npx astro build` is the normal refresh-and-build command.
 - Preserve the compact presentation and the existing colour scheme unless asked.
 - The top navigation intentionally has no product name or logo placeholder.
-- Project pages intentionally omit the Issues/Completed/Milestones metric row.
+- Project pages intentionally omit the Tasks/Completed/Milestones metric row.
+- Public-facing copy calls Linear issues “tasks”. Keep Linear/API/snapshot symbols,
+  GraphQL field names, and existing `/issues/` routes unchanged unless a URL/schema
+  migration is explicitly requested.
 - The homepage “About this initiative” section uses the initiative body from the
   public snapshot (`initiative.descriptionHtml`), rendered from Linear Markdown
   with the usual sanitization and starred-link stripping. Do not reintroduce a
@@ -107,7 +110,7 @@ styles in `src/styles/global.css` (`.graph-*`).
   (`.graph-node--done`); external boundaries stay dashed (`.graph-node--boundary`).
 - Hover: thicken the hovered node, incident edges, and immediate neighbors; show
   SVG annotation chips (title + due date from `dependencyIssueDate`) for that set.
-- Precompute exactly three layouts at build time (`all`, `dependent`, `inflight`).
+- Precompute exactly three task-mode layouts at build time (`all`, `dependent`, `inflight`).
   Do not run the layout optimizer on view or project changes in the browser, and do
   not generate separate layouts per project.
 - Project selection is a focus treatment over the current issue-mode SVG: preserve
@@ -127,7 +130,7 @@ Code: `src/components/Timeline.astro`, styles `.timeline-*` / `.project-bar*` in
 
 ### Product shape
 
-- **Projects only:** date-range bars and project milestones. No issue due markers,
+- **Projects only:** date-range bars and project milestones. No task due markers,
   no blocking dependency arrows, no project-status filter dropdown.
 - Left column is the project name only (no status pills). Status is shown by
   **bar colour** and in tooltips / the accessible table.
