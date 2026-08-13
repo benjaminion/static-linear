@@ -4,6 +4,12 @@ export interface DependencyLayoutNode {
   y: number;
 }
 
+export interface DependencyLayoutInputNode {
+  id: string;
+  /** ISO date used only to preserve chronological X groups; null sorts last. */
+  dateKey: string | null;
+}
+
 export interface DependencyLayoutEdge {
   source: string;
   target: string;
@@ -25,6 +31,8 @@ export interface DependencyLayout {
   maxY: number;
 }
 
+export interface DependencyGraphLayout extends DependencyLayout, DependencyNodeLayout {}
+
 export interface DependencyNodeLayout {
   nodes: DependencyLayoutNode[];
   width: number;
@@ -39,6 +47,10 @@ const BARYCENTER_PASSES = 3;
 const CLEARANCE = 8;
 const SAMPLE_COUNT = 16;
 const CORRIDOR_STEP = 4;
+const MAX_LANES = 10;
+const EXTRA_LANES = 2;
+const ROUTE_PAIR_SAMPLE_COUNT = 6;
+const routePairSampleCache = new WeakMap<Array<[Point, Point, Point, Point]>, Point[]>();
 
 function rimPoint(node: DependencyLayoutNode, toward: Point, radius: number, perpOffset = 0): Point {
   let dx = toward.x - node.x;
@@ -82,6 +94,73 @@ function sampleSegments(segments: Array<[Point, Point, Point, Point]>, count = S
   return points;
 }
 
+function adaptiveSampleSegments(segments: Array<[Point, Point, Point, Point]>, minimum = SAMPLE_COUNT): Point[] {
+  if (!segments.length) return [];
+  const points: Point[] = [];
+  segments.forEach((segment, segmentIndex) => {
+    const controlLength = segment.slice(1).reduce(
+      (sum, point, index) => sum + Math.hypot(point.x - segment[index].x, point.y - segment[index].y),
+      0,
+    );
+    const count = Math.max(minimum, Math.min(64, Math.ceil(controlLength / 12)));
+    const samples = sampleSegment(segment, count);
+    points.push(...(segmentIndex === 0 ? samples : samples.slice(1)));
+  });
+  return points;
+}
+
+function pointToSegmentDistance(point: Point, start: Point, end: Point): number {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSquared = dx * dx + dy * dy;
+  if (!lengthSquared) return Math.hypot(point.x - start.x, point.y - start.y);
+  const t = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared));
+  return Math.hypot(point.x - start.x - t * dx, point.y - start.y - t * dy);
+}
+
+function properIntersection(a: Point, b: Point, c: Point, d: Point): boolean {
+  const orient = (p: Point, q: Point, r: Point) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+  const abC = orient(a, b, c);
+  const abD = orient(a, b, d);
+  const cdA = orient(c, d, a);
+  const cdB = orient(c, d, b);
+  const epsilon = 1e-6;
+  return ((abC > epsilon && abD < -epsilon) || (abC < -epsilon && abD > epsilon))
+    && ((cdA > epsilon && cdB < -epsilon) || (cdA < -epsilon && cdB > epsilon));
+}
+
+function routePairSamples(segments: Array<[Point, Point, Point, Point]>): Point[] {
+  const cached = routePairSampleCache.get(segments);
+  if (cached) return cached;
+  const samples = sampleSegments(segments, ROUTE_PAIR_SAMPLE_COUNT);
+  routePairSampleCache.set(segments, samples);
+  return samples;
+}
+
+/** Pair cost for non-incident routes: crossings dominate, then near-coincident runs. */
+function routePairCost(
+  first: Array<[Point, Point, Point, Point]>,
+  second: Array<[Point, Point, Point, Point]>,
+): number {
+  const a = routePairSamples(first);
+  const b = routePairSamples(second);
+  let crossings = 0;
+  let closeSamples = 0;
+  for (let i = 1; i < a.length; i += 1) {
+    for (let j = 1; j < b.length; j += 1) {
+      if (properIntersection(a[i - 1], a[i], b[j - 1], b[j])) crossings += 1;
+      const distance = Math.min(
+        pointToSegmentDistance(a[i - 1], b[j - 1], b[j]),
+        pointToSegmentDistance(a[i], b[j - 1], b[j]),
+        pointToSegmentDistance(b[j - 1], a[i - 1], a[i]),
+        pointToSegmentDistance(b[j], a[i - 1], a[i]),
+      );
+      if (distance < 7) closeSamples += (7 - distance) / 7;
+    }
+  }
+  return crossings * 4_000 + closeSamples * 5;
+}
+
 /** Minimum distance from path interior samples to any non-endpoint node disc edge (negative = penetration). */
 export function routeClearance(
   segments: Array<[Point, Point, Point, Point]>,
@@ -90,7 +169,7 @@ export function routeClearance(
   targetId: string,
   radius = NODE_RADIUS,
 ): number {
-  const samples = sampleSegments(segments);
+  const samples = adaptiveSampleSegments(segments);
   let best = Infinity;
   for (const point of samples.slice(1, -1)) {
     for (const node of nodes) {
@@ -130,7 +209,7 @@ function angularOffsets(
   nodes: Map<string, DependencyLayoutNode>,
   radius: number,
 ): Map<string, number> {
-  const groups = new Map<string, Array<{ edgeIndex: number; angle: number }>>();
+  const groups = new Map<string, Array<{ edgeIndex: number; angle: number; key: string }>>();
   edges.forEach((edge, edgeIndex) => {
     const source = nodes.get(edge.source);
     const target = nodes.get(edge.target);
@@ -139,13 +218,14 @@ function angularOffsets(
     const inAngle = Math.atan2(source.y - target.y, source.x - target.x);
     const sourceKey = `out:${edge.source}`;
     const targetKey = `in:${edge.target}`;
-    groups.set(sourceKey, [...(groups.get(sourceKey) ?? []), { edgeIndex, angle: outAngle }]);
-    groups.set(targetKey, [...(groups.get(targetKey) ?? []), { edgeIndex, angle: inAngle }]);
+    const edgeKey = `${edge.source}\u0000${edge.target}`;
+    groups.set(sourceKey, [...(groups.get(sourceKey) ?? []), { edgeIndex, angle: outAngle, key: edgeKey }]);
+    groups.set(targetKey, [...(groups.get(targetKey) ?? []), { edgeIndex, angle: inAngle, key: edgeKey }]);
   });
 
   const offsets = new Map<string, number>();
   for (const [key, entries] of groups) {
-    entries.sort((a, b) => a.angle - b.angle || a.edgeIndex - b.edgeIndex);
+    entries.sort((a, b) => a.angle - b.angle || a.key.localeCompare(b.key) || a.edgeIndex - b.edgeIndex);
     const step = entries.length > 1 ? Math.min(10, radius * 1.15 / (entries.length - 1)) : 0;
     entries.forEach((entry, index) => {
       offsets.set(`${key}:${entry.edgeIndex}`, (index - (entries.length - 1) / 2) * step);
@@ -387,15 +467,15 @@ function scoreRoute(
     + kink * 120;
 }
 
-function buildEdgeSegments(
+function buildEdgeCandidates(
   source: DependencyLayoutNode,
   target: DependencyLayoutNode,
   layoutNodes: DependencyLayoutNode[],
   radius: number,
   sourceOffset: number,
   targetOffset: number,
-  edgeIndex: number,
-): Array<[Point, Point, Point, Point]> {
+  edgeKey: string,
+): Array<Array<[Point, Point, Point, Point]>> {
   const candidates: Array<[Point, Point, Point, Point][]> = [];
 
   const direct = directCurve(source, target, radius, sourceOffset, targetOffset);
@@ -408,7 +488,7 @@ function buildEdgeSegments(
   }
 
   if (obstacles.length) {
-    const stagger = (edgeIndex % 3) * 10;
+    const stagger = (hash(edgeKey) % 3) * 10;
     for (const side of [1, -1] as const) {
       const railY = outerRailY(obstacles, source, target, radius, side, stagger);
       candidates.push([corridorCurve(source, target, railY, radius, sourceOffset, targetOffset)]);
@@ -434,16 +514,15 @@ function buildEdgeSegments(
     }
   }
 
-  let best = candidates[0];
-  let bestScore = Infinity;
-  for (const segments of candidates) {
-    const score = scoreRoute(segments, layoutNodes, source, target, radius);
-    if (score < bestScore) {
-      bestScore = score;
-      best = segments;
-    }
-  }
-  return best;
+  return candidates
+    .map((segments, index) => ({
+      segments,
+      index,
+      score: scoreRoute(segments, layoutNodes, source, target, radius),
+    }))
+    .sort((a, b) => a.score - b.score || a.index - b.index)
+    .slice(0, 6)
+    .map(({ segments }) => segments);
 }
 
 export function routeDependencyEdges(
@@ -456,33 +535,77 @@ export function routeDependencyEdges(
   const edges = layoutEdges.filter((edge) => edge.source !== edge.target && nodes.has(edge.source) && nodes.has(edge.target));
   const offsets = angularOffsets(edges, nodes, radius);
 
-  // Longer spans first so they claim the best near-chord corridors.
+  // Longer spans first so the routes which are hardest to place reserve corridors first.
   const order = edges
     .map((edge, edgeIndex) => {
       const source = nodes.get(edge.source)!;
       const target = nodes.get(edge.target)!;
-      return { edge, edgeIndex, span: Math.abs(target.x - source.x) };
+      return { edge, edgeIndex, span: Math.abs(target.x - source.x), key: `${edge.source}\u0000${edge.target}` };
     })
-    .sort((a, b) => b.span - a.span || a.edgeIndex - b.edgeIndex);
+    .sort((a, b) => b.span - a.span || a.key.localeCompare(b.key));
 
   const routed = new Map<number, RoutedDependencyEdge>();
-  for (const { edge, edgeIndex } of order) {
+  const candidatesByIndex = new Map<number, Array<Array<[Point, Point, Point, Point]>>>();
+  for (const { edge, edgeIndex, key } of order) {
     const source = nodes.get(edge.source)!;
     const target = nodes.get(edge.target)!;
-    const segments = buildEdgeSegments(
+    const candidates = buildEdgeCandidates(
       source,
       target,
       layoutNodes,
       radius,
       offsets.get(`out:${edge.source}:${edgeIndex}`) ?? 0,
       offsets.get(`in:${edge.target}:${edgeIndex}`) ?? 0,
-      edgeIndex,
+      key,
     );
+    candidatesByIndex.set(edgeIndex, candidates);
+    let segments = candidates[0];
+    let bestScore = Infinity;
+    for (const candidate of candidates) {
+      let score = scoreRoute(candidate, layoutNodes, source, target, radius);
+      for (const previous of routed.values()) {
+        if (
+          previous.source === edge.source || previous.source === edge.target
+          || previous.target === edge.source || previous.target === edge.target
+        ) continue;
+        score += routePairCost(candidate, previous.segments);
+      }
+      if (score < bestScore) {
+        bestScore = score;
+        segments = candidate;
+      }
+    }
     routed.set(edgeIndex, {
       ...edge,
       segments,
       d: pathString(segments),
     });
+  }
+
+  // Deterministic coordinate descent lets earlier reservations react to later paths.
+  for (let pass = 0; pass < 1; pass += 1) {
+    for (const { edge, edgeIndex } of order) {
+      const source = nodes.get(edge.source)!;
+      const target = nodes.get(edge.target)!;
+      let best = routed.get(edgeIndex)!.segments;
+      let bestScore = Infinity;
+      for (const candidate of candidatesByIndex.get(edgeIndex)!) {
+        let score = scoreRoute(candidate, layoutNodes, source, target, radius);
+        for (const [otherIndex, other] of routed) {
+          if (otherIndex === edgeIndex) continue;
+          if (
+            other.source === edge.source || other.source === edge.target
+            || other.target === edge.source || other.target === edge.target
+          ) continue;
+          score += routePairCost(candidate, other.segments);
+        }
+        if (score < bestScore) {
+          bestScore = score;
+          best = candidate;
+        }
+      }
+      routed.set(edgeIndex, { ...edge, segments: best, d: pathString(best) });
+    }
   }
 
   const routes = edges.map((_, edgeIndex) => routed.get(edgeIndex)!);
@@ -542,6 +665,22 @@ function layoutScore(nodes: DependencyLayoutNode[], edges: DependencyLayoutEdge[
     }
   }
 
+  // Chord crossings are a cheap proxy during lane search. Exact routed-curve
+  // crossings are evaluated for the small set of finalist layouts.
+  for (let first = 0; first < valid.length; first += 1) {
+    const a = valid[first];
+    const aSource = byId.get(a.source)!;
+    const aTarget = byId.get(a.target)!;
+    for (let second = first + 1; second < valid.length; second += 1) {
+      const b = valid[second];
+      if (
+        a.source === b.source || a.source === b.target
+        || a.target === b.source || a.target === b.target
+      ) continue;
+      if (properIntersection(aSource, aTarget, byId.get(b.source)!, byId.get(b.target)!)) score += 900;
+    }
+  }
+
   // Soft separation for nodes that share a lane and are horizontal neighbors.
   for (let i = 0; i < nodes.length; i += 1) {
     for (let j = i + 1; j < nodes.length; j += 1) {
@@ -570,11 +709,16 @@ function median(values: number[]): number {
  * Places nodes on a fixed left-to-right order (caller supplies date-sorted ids).
  * Only vertical lanes are optimized; X is strictly monotonic with input order.
  */
-export function layoutDependencyNodes(nodeIds: string[], edges: DependencyLayoutEdge[]): DependencyNodeLayout {
+export function layoutDependencyNodes(
+  nodeIds: string[],
+  edges: DependencyLayoutEdge[],
+  laneCountOverride?: number,
+): DependencyNodeLayout {
   if (!nodeIds.length) return { nodes: [], width: 1000 };
   const edgeCount = edges.filter((edge) => edge.source !== edge.target).length;
   const density = edgeCount / Math.max(1, nodeIds.length);
-  const laneCount = Math.max(1, Math.min(8, Math.ceil(nodeIds.length / 4) + (density > 1 ? 1 : 0)));
+  const defaultLaneCount = Math.max(1, Math.min(8, Math.ceil(nodeIds.length / 4) + (density > 1 ? 1 : 0)));
+  const laneCount = Math.max(1, Math.min(MAX_LANES, laneCountOverride ?? defaultLaneCount));
   const width = Math.max(1000, 100 + Math.max(0, nodeIds.length - 1) * HORIZONTAL_STEP);
   const degrees = new Map(nodeIds.map((id) => [id, 0]));
   for (const edge of edges) {
@@ -673,4 +817,267 @@ export function layoutDependencyNodes(nodeIds: string[], edges: DependencyLayout
 
   const minLane = Math.min(...bestLanes);
   return { nodes: makeNodes(bestLanes.map((lane) => lane - minLane)), width };
+}
+
+function routePairCrosses(
+  first: Array<[Point, Point, Point, Point]>,
+  second: Array<[Point, Point, Point, Point]>,
+): boolean {
+  const a = routePairSamples(first);
+  const b = routePairSamples(second);
+  for (let i = 1; i < a.length; i += 1) {
+    for (let j = 1; j < b.length; j += 1) {
+      if (properIntersection(a[i - 1], a[i], b[j - 1], b[j])) return true;
+    }
+  }
+  return false;
+}
+
+/** Number of non-incident route pairs with at least one proper crossing. */
+export function countRouteCrossings(routes: RoutedDependencyEdge[]): number {
+  let crossings = 0;
+  for (let first = 0; first < routes.length; first += 1) {
+    for (let second = first + 1; second < routes.length; second += 1) {
+      const a = routes[first];
+      const b = routes[second];
+      if (
+        a.source === b.source || a.source === b.target
+        || a.target === b.source || a.target === b.target
+      ) continue;
+      if (routePairCrosses(a.segments, b.segments)) crossings += 1;
+    }
+  }
+  return crossings;
+}
+
+function dateKeyValue(dateKey: string | null): string {
+  return dateKey ?? "\uffff";
+}
+
+function sameDateTopologicalRanks(
+  inputNodes: DependencyLayoutInputNode[],
+  edges: DependencyLayoutEdge[],
+): Map<string, number> {
+  const dates = new Map(inputNodes.map((node) => [node.id, dateKeyValue(node.dateKey)]));
+  const ranks = new Map(inputNodes.map((node) => [node.id, 0]));
+  const dateGroups = new Map<string, string[]>();
+  for (const node of inputNodes) {
+    const date = dates.get(node.id)!;
+    dateGroups.set(date, [...(dateGroups.get(date) ?? []), node.id]);
+  }
+
+  for (const ids of dateGroups.values()) {
+    const inGroup = new Set(ids);
+    const outgoing = new Map(ids.map((id) => [id, [] as string[]]));
+    const indegree = new Map(ids.map((id) => [id, 0]));
+    for (const edge of edges) {
+      if (!inGroup.has(edge.source) || !inGroup.has(edge.target) || edge.source === edge.target) continue;
+      outgoing.get(edge.source)!.push(edge.target);
+      indegree.set(edge.target, indegree.get(edge.target)! + 1);
+    }
+    for (const targets of outgoing.values()) targets.sort();
+    const ready = ids.filter((id) => indegree.get(id) === 0).sort();
+    while (ready.length) {
+      const id = ready.shift()!;
+      for (const target of outgoing.get(id)!) {
+        ranks.set(target, Math.max(ranks.get(target)!, ranks.get(id)! + 1));
+        indegree.set(target, indegree.get(target)! - 1);
+        if (indegree.get(target) === 0) {
+          ready.push(target);
+          ready.sort();
+        }
+      }
+    }
+    // A same-date cycle has no fully rightward ordering. The existing cycle alert
+    // remains the user-facing signal; deterministic ID order handles its SCC here.
+  }
+  return ranks;
+}
+
+function sameDateOrders(inputNodes: DependencyLayoutInputNode[], edges: DependencyLayoutEdge[]): string[][] {
+  const ranks = sameDateTopologicalRanks(inputNodes, edges);
+  const canonical = [...inputNodes]
+    .sort((a, b) => dateKeyValue(a.dateKey).localeCompare(dateKeyValue(b.dateKey))
+      || ranks.get(a.id)! - ranks.get(b.id)!
+      || a.id.localeCompare(b.id))
+    .map(({ id }) => id);
+  const dates = new Map(inputNodes.map((node) => [node.id, dateKeyValue(node.dateKey)]));
+  const neighbors = neighborsOf(canonical, edges);
+  const refined = [...canonical];
+
+  // Alternating barycentric sweeps refine only equal-date buckets. Neighbor lists
+  // are sorted so relation input order cannot affect tie-breaking.
+  for (let pass = 0; pass < 4; pass += 1) {
+    const positions = new Map(refined.map((id, index) => [id, index]));
+    const groups: Array<{ start: number; end: number }> = [];
+    for (let start = 0; start < refined.length;) {
+      let end = start + 1;
+      while (end < refined.length && dates.get(refined[end]) === dates.get(refined[start])) end += 1;
+      groups.push({ start, end });
+      start = end;
+    }
+    if (pass % 2) groups.reverse();
+    for (const { start, end } of groups) {
+      const ordered = refined.slice(start, end).map((id) => {
+        const adjacent = [...(neighbors.get(id) ?? [])]
+          .sort()
+          .map((neighbor) => positions.get(neighbor))
+          .filter((position): position is number => position !== undefined);
+        return { id, rank: ranks.get(id)!, focus: adjacent.length ? median(adjacent) : positions.get(id)! };
+      });
+      ordered.sort((a, b) => a.rank - b.rank || a.focus - b.focus || a.id.localeCompare(b.id));
+      refined.splice(start, end - start, ...ordered.map(({ id }) => id));
+    }
+  }
+
+  return refined.every((id, index) => id === canonical[index]) ? [canonical] : [canonical, refined];
+}
+
+function graphLayoutScore(
+  nodes: DependencyLayoutNode[],
+  edges: DependencyLayoutEdge[],
+  routes: RoutedDependencyEdge[],
+  radius: number,
+): number {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  let score = layoutScore(nodes, edges);
+  const ys = nodes.map(({ y }) => y);
+  score += (Math.max(...ys) - Math.min(...ys)) * 1.5;
+
+  for (const route of routes) {
+    const source = byId.get(route.source)!;
+    const target = byId.get(route.target)!;
+    score += scoreRoute(route.segments, nodes, source, target, radius);
+  }
+  for (let first = 0; first < routes.length; first += 1) {
+    for (let second = first + 1; second < routes.length; second += 1) {
+      const a = routes[first];
+      const b = routes[second];
+      if (
+        a.source === b.source || a.source === b.target
+        || a.target === b.source || a.target === b.target
+      ) continue;
+      score += routePairCost(a.segments, b.segments);
+    }
+  }
+  return score;
+}
+
+function refineConflictedNodes(
+  original: DependencyLayoutNode[],
+  edges: DependencyLayoutEdge[],
+  routes: RoutedDependencyEdge[],
+  dates: Map<string, string>,
+  ranks: Map<string, number>,
+  maximumLanes: number,
+): DependencyLayoutNode[] | null {
+  const conflicted = new Set<string>();
+  for (let first = 0; first < routes.length; first += 1) {
+    for (let second = first + 1; second < routes.length; second += 1) {
+      const a = routes[first];
+      const b = routes[second];
+      if (
+        a.source === b.source || a.source === b.target
+        || a.target === b.source || a.target === b.target
+      ) continue;
+      if (routePairCrosses(a.segments, b.segments)) {
+        conflicted.add(a.source); conflicted.add(a.target);
+        conflicted.add(b.source); conflicted.add(b.target);
+      }
+    }
+  }
+  if (!conflicted.size) return null;
+
+  const nodes = original.map((node) => ({ ...node }));
+  let currentScore = layoutScore(nodes, edges);
+  let changed = false;
+  for (const node of nodes.filter(({ id }) => conflicted.has(id)).sort((a, b) => a.id.localeCompare(b.id))) {
+    const originalY = node.y;
+    let bestY = originalY;
+    let bestScore = currentScore;
+    for (const y of [originalY - LANE_GAP, originalY + LANE_GAP]) {
+      if (y < 70 || y > 70 + (maximumLanes - 1) * LANE_GAP) continue;
+      node.y = y;
+      const score = layoutScore(nodes, edges);
+      if (score < bestScore - 1) {
+        bestScore = score;
+        bestY = y;
+      }
+    }
+    node.y = bestY;
+    if (bestY !== originalY) changed = true;
+    currentScore = bestScore;
+  }
+
+  const xOrder = [...nodes].sort((a, b) => a.x - b.x);
+  for (let index = 0; index < xOrder.length - 1; index += 1) {
+    const first = xOrder[index];
+    const second = xOrder[index + 1];
+    if (dates.get(first.id) !== dates.get(second.id)) continue;
+    if (ranks.get(first.id) !== ranks.get(second.id)) continue;
+    if (!conflicted.has(first.id) && !conflicted.has(second.id)) continue;
+    [first.x, second.x] = [second.x, first.x];
+    const score = layoutScore(nodes, edges);
+    if (score < currentScore - 1) {
+      currentScore = score;
+      changed = true;
+      [xOrder[index], xOrder[index + 1]] = [second, first];
+    } else {
+      [first.x, second.x] = [second.x, first.x];
+    }
+  }
+  return changed ? nodes : null;
+}
+
+/**
+ * Joint date-aware layout. It explores bounded same-date orders and lane counts,
+ * then judges finalists using the actual globally routed curves.
+ */
+export function layoutDependencyGraph(
+  inputNodes: DependencyLayoutInputNode[],
+  inputEdges: DependencyLayoutEdge[],
+  radius = NODE_RADIUS,
+): DependencyGraphLayout {
+  if (!inputNodes.length) return { nodes: [], routes: [], width: 1000, minY: 0, maxY: 220 };
+  const nodeIds = new Set(inputNodes.map(({ id }) => id));
+  const edges = inputEdges.filter((edge) => edge.source !== edge.target && nodeIds.has(edge.source) && nodeIds.has(edge.target));
+  const edgeCount = edges.length;
+  const density = edgeCount / Math.max(1, inputNodes.length);
+  const baseLanes = Math.max(1, Math.min(8, Math.ceil(inputNodes.length / 4) + (density > 1 ? 1 : 0)));
+  const maximumLanes = Math.min(MAX_LANES, baseLanes + EXTRA_LANES);
+  const placements: Array<{ layout: DependencyNodeLayout; proxyScore: number; key: string }> = [];
+
+  for (const order of sameDateOrders(inputNodes, edges)) {
+    for (let lanes = baseLanes; lanes <= maximumLanes; lanes += 1) {
+      const layout = layoutDependencyNodes(order, edges, lanes);
+      placements.push({
+        layout,
+        proxyScore: layoutScore(layout.nodes, edges) + (lanes - baseLanes) * LANE_GAP * 1.5,
+        key: `${order.join("\u0000")}\u0001${lanes}`,
+      });
+    }
+  }
+
+  placements.sort((a, b) => a.proxyScore - b.proxyScore || a.key.localeCompare(b.key));
+  let best: DependencyGraphLayout | null = null;
+  let bestScore = Infinity;
+  for (const { layout } of placements.slice(0, 2)) {
+    const routed = routeDependencyEdges(layout.nodes, edges, radius);
+    const score = graphLayoutScore(layout.nodes, edges, routed.routes, radius);
+    if (score < bestScore) {
+      bestScore = score;
+      best = { ...layout, ...routed };
+    }
+  }
+
+
+  const dates = new Map(inputNodes.map((node) => [node.id, dateKeyValue(node.dateKey)]));
+  const ranks = sameDateTopologicalRanks(inputNodes, edges);
+  const refinedNodes = refineConflictedNodes(best!.nodes, edges, best!.routes, dates, ranks, maximumLanes);
+  if (refinedNodes) {
+    const routed = routeDependencyEdges(refinedNodes, edges, radius);
+    const score = graphLayoutScore(refinedNodes, edges, routed.routes, radius);
+    if (score < bestScore) best = { nodes: refinedNodes, width: best!.width, ...routed };
+  }
+  return best!;
 }

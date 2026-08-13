@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterDependencyView, type DependencyViewNode } from "../src/lib/dependency-view";
+import { dependencyViewKey, filterDependencyView, type DependencyViewNode } from "../src/lib/dependency-view";
 
 const nodes: DependencyViewNode[] = [
   { id: "isolated", projectId: "alpha", statusType: "unstarted" },
@@ -17,6 +17,10 @@ const edges = [
 ];
 
 describe("filterDependencyView", () => {
+  it("uses an unambiguous stable key for precomputed layouts", () => {
+    expect(dependencyViewKey("dependent", "alpha:beta")).toBe('["dependent","alpha:beta"]');
+  });
+
   it("shows every issue and referenced boundary in the all view", () => {
     const result = filterDependencyView(nodes, edges, "all");
     expect(result.nodes.map((node) => node.id)).toEqual(nodes.map((node) => node.id));

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  countRouteCrossings,
   cubicPoint,
+  layoutDependencyGraph,
   layoutDependencyNodes,
   routeClearance,
   routeDependencyEdges,
@@ -209,5 +211,115 @@ describe("layoutDependencyNodes", () => {
     for (const route of routes) {
       expect(routeClearance(route.segments, nodes, route.source, route.target, RADIUS)).toBeGreaterThanOrEqual(4);
     }
+  });
+});
+
+describe("layoutDependencyGraph", () => {
+  it("preserves date order while deterministically refining equal-date ties", () => {
+    const input = [
+      { id: "late", dateKey: "2027-02-01" },
+      { id: "same-b", dateKey: "2027-01-01" },
+      { id: "undated", dateKey: null },
+      { id: "same-a", dateKey: "2027-01-01" },
+      { id: "early", dateKey: "2026-12-01" },
+    ];
+    const edges = [
+      { source: "early", target: "same-b" },
+      { source: "same-b", target: "same-a" },
+      { source: "same-a", target: "late" },
+      { source: "late", target: "undated" },
+    ];
+
+    const first = layoutDependencyGraph(input, edges);
+    const second = layoutDependencyGraph([...input].reverse(), [...edges].reverse());
+    const order = [...first.nodes].sort((a, b) => a.x - b.x).map(({ id }) => id);
+
+    expect(order[0]).toBe("early");
+    expect(new Set(order.slice(1, 3))).toEqual(new Set(["same-a", "same-b"]));
+    expect(order.slice(3)).toEqual(["late", "undated"]);
+    const positions = new Map(first.nodes.map((node) => [node.id, node.x]));
+    expect(positions.get("same-b")!).toBeLessThan(positions.get("same-a")!);
+    expect(second.nodes).toEqual(first.nodes);
+    expect(new Map(second.routes.map((route) => [`${route.source}:${route.target}`, route.d])))
+      .toEqual(new Map(first.routes.map((route) => [`${route.source}:${route.target}`, route.d])));
+  });
+
+  it("uses no more than ten balanced lanes on a dense graph", () => {
+    const nodes = Array.from({ length: 48 }, (_, index) => ({
+      id: `n${index}`,
+      dateKey: `2027-${String(Math.floor(index / 4) + 1).padStart(2, "0")}-01`,
+    }));
+    const edges = Array.from({ length: 12 }, (_, index) => ({
+      source: `n${index}`,
+      target: `n${index + 1}`,
+    }));
+    const layout = layoutDependencyGraph(nodes, edges);
+
+    expect(new Set(layout.nodes.map(({ y }) => y)).size).toBeLessThanOrEqual(10);
+  });
+
+  it("globally routes an avoidable crossing pattern without node intersections", () => {
+    const nodes = [
+      { id: "a", dateKey: "2027-01-01" },
+      { id: "b", dateKey: "2027-02-01" },
+      { id: "c", dateKey: "2027-03-01" },
+      { id: "d", dateKey: "2027-04-01" },
+      { id: "e", dateKey: "2027-05-01" },
+      { id: "f", dateKey: "2027-06-01" },
+    ];
+    const edges = [
+      { source: "a", target: "e" },
+      { source: "b", target: "f" },
+      { source: "a", target: "c" },
+      { source: "d", target: "f" },
+    ];
+    const layout = layoutDependencyGraph(nodes, edges);
+
+    expect(countRouteCrossings(layout.routes)).toBe(0);
+    for (const route of layout.routes) {
+      expect(routeClearance(route.segments, layout.nodes, route.source, route.target, RADIUS)).toBeGreaterThanOrEqual(6);
+    }
+  });
+
+  it("keeps a representative initiative-scale graph readable", () => {
+    const nodes = Array.from({ length: 36 }, (_, index) => ({
+      id: `n${index}`,
+      dateKey: `2027-${String(Math.floor(index / 6) + 1).padStart(2, "0")}-01`,
+    }));
+    const edges = [
+      ...Array.from({ length: 30 }, (_, index) => ({
+        source: `n${index}`,
+        target: `n${Math.min(35, index + 5 + index % 5)}`,
+      })),
+      ...Array.from({ length: 6 }, (_, index) => ({
+        source: `n${index}`,
+        target: `n${35 - index}`,
+      })),
+    ];
+    const layout = layoutDependencyGraph(nodes, edges);
+
+    expect(countRouteCrossings(layout.routes)).toBeLessThanOrEqual(12);
+    for (const route of layout.routes) {
+      expect(routeClearance(route.segments, layout.nodes, route.source, route.target, RADIUS)).toBeGreaterThanOrEqual(6);
+    }
+  });
+
+  it("handles reverse and cyclic dependencies deterministically", () => {
+    const nodes = [
+      { id: "a", dateKey: "2027-01-01" },
+      { id: "b", dateKey: "2027-02-01" },
+      { id: "c", dateKey: "2027-03-01" },
+    ];
+    const edges = [
+      { source: "a", target: "b" },
+      { source: "b", target: "c" },
+      { source: "c", target: "a" },
+    ];
+    const first = layoutDependencyGraph(nodes, edges);
+    const second = layoutDependencyGraph(nodes, edges);
+
+    expect(second).toEqual(first);
+    expect(first.routes).toHaveLength(3);
+    expect(first.routes.every((route) => route.segments.length > 0)).toBe(true);
   });
 });

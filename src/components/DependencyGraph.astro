@@ -1,5 +1,7 @@
 ---
 import type { PublicSnapshot } from "../lib/schema";
+import { layoutDependencyGraph, type DependencyGraphLayout } from "../lib/dependency-layout";
+import { dependencyViewKey, filterDependencyView, type DependencyViewMode } from "../lib/dependency-view";
 import {
   blockingRelations,
   compareDependencyIssues,
@@ -28,7 +30,26 @@ const nodes = endpointIds.map((id) => ({
   href: snapshot.issues[id] ? issueHref(snapshot.issues[id]) : null,
   projectId: snapshot.issues[id]?.projectId ?? null,
 }));
-const graphData = serializeForScript({ nodes, edges: relations.map((relation) => ({ source: relation.sourceId, target: relation.targetId })) });
+const edges = relations.map((relation) => ({ source: relation.sourceId, target: relation.targetId }));
+const layouts: Record<string, DependencyGraphLayout> = {};
+const layoutCache = new Map<string, DependencyGraphLayout>();
+const modes: DependencyViewMode[] = ["all", "dependent", "inflight"];
+for (const projectId of ["", ...projects.map((project) => project.id)]) {
+  for (const mode of modes) {
+    const view = filterDependencyView(nodes, edges, mode, projectId);
+    const signature = JSON.stringify([
+      view.nodes.map((node) => [node.id, node.dueDate]),
+      view.edges.map((edge) => [edge.source, edge.target]),
+    ]);
+    let layout = layoutCache.get(signature);
+    if (!layout) {
+      layout = layoutDependencyGraph(view.nodes.map((node) => ({ id: node.id, dateKey: node.dueDate })), view.edges);
+      layoutCache.set(signature, layout);
+    }
+    layouts[dependencyViewKey(mode, projectId)] = layout;
+  }
+}
+const graphData = serializeForScript({ nodes, edges, layouts });
 const cycles = dependencyCycles(snapshot);
 ---
 
@@ -83,8 +104,8 @@ const cycles = dependencyCycles(snapshot);
     zoomGraphCamera,
     type GraphViewBox,
   } from "../lib/dependency-camera";
-  import { layoutDependencyNodes, routeDependencyEdges } from "../lib/dependency-layout";
-  import { filterDependencyView, type DependencyViewMode } from "../lib/dependency-view";
+  import type { DependencyGraphLayout } from "../lib/dependency-layout";
+  import { dependencyViewKey, filterDependencyView, type DependencyViewMode } from "../lib/dependency-view";
 
   interface GraphNode {
     id: string;
@@ -96,7 +117,11 @@ const cycles = dependencyCycles(snapshot);
     projectId: string | null;
   }
   interface GraphEdge { source: string; target: string }
-  interface GraphData { nodes: GraphNode[]; edges: GraphEdge[] }
+  interface GraphData {
+    nodes: GraphNode[];
+    edges: GraphEdge[];
+    layouts: Record<string, DependencyGraphLayout>;
+  }
   interface GraphCamera {
     fit: (base?: GraphViewBox) => void;
     zoomBy: (factor: number) => void;
@@ -410,8 +435,9 @@ const cycles = dependencyCycles(snapshot);
     nodeLayer.replaceChildren();
     edgeLayer.replaceChildren();
     annotationLayer.replaceChildren();
-    const nodeLayout = layoutDependencyNodes(nodes.map((node) => node.id), edges);
-    const positions = new Map(nodeLayout.nodes.map(({ id, x, y }) => [id, { x, y }]));
+    const layout = all.layouts[dependencyViewKey(mode, project)];
+    if (!layout) return;
+    const positions = new Map(layout.nodes.map(({ id, x, y }) => [id, { x, y }]));
     const nodeCircles = new Map<string, SVGCircleElement>();
     const annotations = new Map<string, SVGGElement>();
     const neighbors = new Map<string, Set<string>>();
@@ -442,10 +468,6 @@ const cycles = dependencyCycles(snapshot);
       annotationLayer.append(annotation);
       annotations.set(node.id, annotation);
     });
-    const layout = routeDependencyEdges(
-      [...positions].map(([id, position]) => ({ id, ...position })),
-      edges,
-    );
     const edgePaths: SVGPathElement[] = [];
     layout.routes.forEach((route) => {
       const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -462,7 +484,7 @@ const cycles = dependencyCycles(snapshot);
       : layout.minY;
     const minY = Math.min(layout.minY, annotationTop);
     const maxY = layout.maxY;
-    camera.fit({ x: 0, y: minY, width: nodeLayout.width, height: maxY - minY });
+    camera.fit({ x: 0, y: minY, width: layout.width, height: maxY - minY });
 
     let selectedId: string | null = null;
     const clearHighlight = () => {

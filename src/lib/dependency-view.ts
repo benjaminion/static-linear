@@ -1,5 +1,9 @@
 export type DependencyViewMode = "all" | "dependent" | "inflight";
 
+export function dependencyViewKey(mode: DependencyViewMode, projectId = ""): string {
+  return JSON.stringify([mode, projectId]);
+}
+
 export interface DependencyViewNode {
   id: string;
   projectId: string | null;
