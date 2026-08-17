@@ -13,7 +13,13 @@ const { issues, snapshot, level = 0 } = Astro.props;
         <a class="issue-identifier" href={issueHref(issue)}>{issue.identifier}</a>
         <a class="issue-title" href={issueHref(issue)}>{issue.title}</a>
         <span class={statusClass(issue.state.type)}>{issue.state.name}</span>
-        {issue.dueDate && <time datetime={issue.dueDate}>{issue.dueDate}</time>}
+        {issue.dueDate && (
+          <time
+            datetime={issue.dueDate}
+            data-task-due-date={issue.dueDate}
+            data-task-status-type={issue.state.type}
+          >{issue.dueDate}</time>
+        )}
       </div>
       {issue.childIds.length > 0 && (
         <Astro.self
@@ -25,4 +31,3 @@ const { issues, snapshot, level = 0 } = Astro.props;
     </li>
   ))}
 </ul>
-

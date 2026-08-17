@@ -24,7 +24,7 @@ const otherEndpoint = (relation: any) => relation.sourceId === issue.id ? relati
   <header class="page-header issue-header">
     <a class="back-link" href={projectHref(project)}>← {project.name}</a>
     <div class="hero-heading"><div><span class="eyebrow">{issue.identifier}</span><h1>{issue.title}</h1></div><a class="button" href={issue.url} target="_blank" rel="noopener noreferrer">Open in Linear ↗</a></div>
-    <div class="hero-meta"><span class={statusClass(issue.state.type)}>{issue.state.name}</span><span>{issue.priorityLabel}</span>{issue.assignee && <span>{issue.assignee.name}</span>}<span>Due: {formatDate(issue.dueDate)}</span></div>
+    <div class="hero-meta"><span class={statusClass(issue.state.type)}>{issue.state.name}</span><span>{issue.priorityLabel}</span>{issue.assignee && <span>{issue.assignee.name}</span>}<span>Due: {issue.dueDate ? <time datetime={issue.dueDate} data-task-due-date={issue.dueDate} data-task-status-type={issue.state.type}>{formatDate(issue.dueDate)}</time> : "Not set"}</span></div>
   </header>
   <div class="detail-grid">
     <article class="detail-main">

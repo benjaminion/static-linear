@@ -9,6 +9,7 @@ import {
   serializeForScript,
 } from "../src/lib/view";
 import type { PublicIssue, PublicProject, PublicSnapshot } from "../src/lib/schema";
+import { isTaskOverdue, localDateKey } from "../src/lib/task-due-date";
 
 function project(name: string): PublicProject {
   return { name, id: name } as PublicProject;
@@ -24,6 +25,21 @@ describe("compareProjects", () => {
       "Alpha",
       "Beta",
     ]);
+  });
+});
+
+describe("task due dates", () => {
+  it("uses the viewer's local calendar date", () => {
+    expect(localDateKey(new Date(2026, 7, 17, 23, 59))).toBe("2026-08-17");
+  });
+
+  it("marks only past dates on non-terminal tasks as overdue", () => {
+    expect(isTaskOverdue("2026-08-16", "started", "2026-08-17")).toBe(true);
+    expect(isTaskOverdue("2026-08-17", "started", "2026-08-17")).toBe(false);
+    expect(isTaskOverdue("2026-08-18", "started", "2026-08-17")).toBe(false);
+    expect(isTaskOverdue("2026-08-16", "completed", "2026-08-17")).toBe(false);
+    expect(isTaskOverdue("2026-08-16", "canceled", "2026-08-17")).toBe(false);
+    expect(isTaskOverdue(null, "started", "2026-08-17")).toBe(false);
   });
 });
 

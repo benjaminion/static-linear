@@ -164,6 +164,7 @@ p { line-height: 1.55; }
 .graph-annotation__card { fill: var(--surface); stroke: var(--line); stroke-width: 1; filter: drop-shadow(0 1px 2px rgba(28, 35, 31, .12)); }
 .dependency-graph .graph-annotation__title { fill: var(--ink); font-family: system-ui, -apple-system, sans-serif; font-size: 10px; font-weight: 600; }
 .dependency-graph .graph-annotation__date { fill: var(--muted); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 9px; font-weight: 500; }
+.dependency-graph .graph-annotation__date.task-due-date--overdue { fill: var(--accent); }
 .graph-annotation__open { display: none; pointer-events: all; }
 .graph-annotation--selected .graph-annotation__open { display: block; }
 .graph-annotation__open rect { fill: var(--teal); }
@@ -187,6 +188,7 @@ tbody th { font-weight: 600; }
 .issue-identifier { color: var(--teal); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: .76rem; font-weight: 500; }
 .issue-title { font-weight: 600; text-decoration: none; }
 .issue-row time { color: var(--muted); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: .68rem; text-align: right; }
+[data-task-due-date].task-due-date--overdue { color: var(--accent); }
 .milestone-list { position: relative; display: grid; gap: .55rem; margin: 0; padding: 0; list-style: none; }
 .milestone-list::before { position: absolute; top: 1rem; bottom: 1rem; left: .5rem; width: 1px; background: var(--line); content: ""; }
 .milestone-list li { position: relative; display: grid; grid-template-columns: 1rem 1fr; gap: .65rem; }

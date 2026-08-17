@@ -96,6 +96,7 @@ const cycles = dependencyCycles(snapshot);
     type GraphViewBox,
   } from "../lib/dependency-camera";
   import type { DependencyGraphLayout } from "../lib/dependency-layout";
+  import { isTaskOverdue } from "../lib/task-due-date";
   import {
     dependencyEdgeCrossesProject,
     dependencyEdgeTouchesProject,
@@ -174,6 +175,9 @@ const cycles = dependencyCycles(snapshot);
 
     const dateText = document.createElementNS("http://www.w3.org/2000/svg", "text");
     dateText.setAttribute("class", "graph-annotation__date");
+    if (isTaskOverdue(node.dueDate, node.statusType)) {
+      dateText.classList.add("task-due-date--overdue");
+    }
     dateText.setAttribute("x", String(x));
     dateText.setAttribute("y", String(cardY + 29));
     dateText.setAttribute("text-anchor", "middle");

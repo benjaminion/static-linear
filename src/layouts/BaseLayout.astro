@@ -38,5 +38,15 @@ const { title, description = "An invite-only view of work tracked in Linear", ge
       <span>Static snapshot of Linear planning data.</span>
       {generatedAt && <span>Generated <time datetime={generatedAt}>{new Date(generatedAt).toLocaleString("en-GB")}</time></span>}
     </footer>
+    <script>
+      import { isTaskOverdue } from "../lib/task-due-date";
+
+      document.querySelectorAll<HTMLElement>("[data-task-due-date]").forEach((element) => {
+        element.classList.toggle(
+          "task-due-date--overdue",
+          isTaskOverdue(element.dataset.taskDueDate, element.dataset.taskStatusType),
+        );
+      });
+    </script>
   </body>
 </html>

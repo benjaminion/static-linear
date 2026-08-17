@@ -143,7 +143,13 @@ const unassignedCount = (groupsByKey.get("unassigned")?.projects.length ?? 0)
                       <a href={issueHref(issue)}><span class="issue-identifier">{issue.identifier}</span> {issue.title}</a>
                       <span class={statusClass(issue.state.type)}>{issue.state.name}</span>
                     </div>
-                    <span class="people-date"><span>Due</span> {formatDate(issue.dueDate)}</span>
+                    <span class="people-date"><span>Due</span> {issue.dueDate ? (
+                      <time
+                        datetime={issue.dueDate}
+                        data-task-due-date={issue.dueDate}
+                        data-task-status-type={issue.state.type}
+                      >{formatDate(issue.dueDate)}</time>
+                    ) : "Not set"}</span>
                     <span class="people-project">{snapshot.projects[issue.projectId]?.name}</span>
                   </li>
                 ))}
