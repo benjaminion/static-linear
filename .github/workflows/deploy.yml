@@ -1,0 +1,56 @@
+name: Regenerate and deploy site
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-site-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Run Astro and TypeScript checks
+        run: npm run check
+        env:
+          LINEAR_SNAPSHOT_PATH: tests/fixtures/snapshot.json
+
+      - name: Verify deterministic fixture build
+        run: npm run build:cached
+        env:
+          LINEAR_SNAPSHOT_PATH: tests/fixtures/snapshot.json
+
+      - name: Fetch Linear data and build production site
+        run: npm run build
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          LINEAR_INITIATIVE_ID: ${{ secrets.LINEAR_INITIATIVE_ID }}
+
+      - name: Deploy to Cloudflare
+        run: npm run deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
