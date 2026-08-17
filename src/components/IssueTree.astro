@@ -1,13 +1,20 @@
 ---
 import type { PublicIssue, PublicSnapshot } from "../lib/schema";
-import { compareIssues, issueHref, statusClass } from "../lib/view";
+import { compareIssues, compareIssuesByDueDate, issueHref, statusClass } from "../lib/view";
 
-interface Props { issues: PublicIssue[]; snapshot: PublicSnapshot; level?: number }
-const { issues, snapshot, level = 0 } = Astro.props;
+interface Props {
+  issues: PublicIssue[];
+  snapshot: PublicSnapshot;
+  level?: number;
+  orderBy?: "priority" | "dueDate";
+}
+const { issues, snapshot, level = 0, orderBy = "priority" } = Astro.props;
+const compare = orderBy === "dueDate" ? compareIssuesByDueDate : compareIssues;
+const orderedIssues = [...issues].sort(compare);
 ---
 
 <ul class:list={["issue-tree", { "issue-tree--nested": level > 0 }]}>
-  {issues.map((issue) => (
+  {orderedIssues.map((issue) => (
     <li>
       <div class="issue-row">
         <a class="issue-identifier" href={issueHref(issue)}>{issue.identifier}</a>
@@ -23,9 +30,10 @@ const { issues, snapshot, level = 0 } = Astro.props;
       </div>
       {issue.childIds.length > 0 && (
         <Astro.self
-          issues={issue.childIds.map((id) => snapshot.issues[id]).filter(Boolean).sort(compareIssues)}
+          issues={issue.childIds.map((id) => snapshot.issues[id]).filter(Boolean)}
           snapshot={snapshot}
           level={level + 1}
+          orderBy={orderBy}
         />
       )}
     </li>

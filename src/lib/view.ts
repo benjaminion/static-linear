@@ -72,6 +72,10 @@ export function compareIssues(a: PublicIssue, b: PublicIssue): number {
   return a.priority - b.priority || a.identifier.localeCompare(b.identifier);
 }
 
+export function compareIssuesByDueDate(a: PublicIssue, b: PublicIssue): number {
+  return compareNullableDates(a.dueDate, b.dueDate) || compareIssues(a, b);
+}
+
 export function projectOwner(project: PublicProject): WorkOwner {
   if (project.lead) return namedOwner(project.lead.name, "linear");
   const summaryOwner = descriptionOwner(project.summary);

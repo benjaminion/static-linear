@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   compareDependencyIssues,
+  compareIssuesByDueDate,
   compareNullableDates,
   compareProjects,
   dependencyIssueDate,
@@ -9,6 +10,7 @@ import {
   serializeForScript,
 } from "../src/lib/view";
 import type { PublicIssue, PublicProject, PublicSnapshot } from "../src/lib/schema";
+import { readSnapshot } from "../src/lib/snapshot";
 import { isTaskOverdue, localDateKey } from "../src/lib/task-due-date";
 
 function project(name: string): PublicProject {
@@ -40,6 +42,24 @@ describe("task due dates", () => {
     expect(isTaskOverdue("2026-08-16", "completed", "2026-08-17")).toBe(false);
     expect(isTaskOverdue("2026-08-16", "canceled", "2026-08-17")).toBe(false);
     expect(isTaskOverdue(null, "started", "2026-08-17")).toBe(false);
+  });
+
+  it("orders tasks chronologically with undated tasks last", async () => {
+    const snapshot = await readSnapshot("tests/fixtures/snapshot.json");
+    const earlier = snapshot.issues["issue-one"];
+    const later = snapshot.issues["issue-two"];
+    const undated = {
+      ...later,
+      id: "issue-undated",
+      identifier: "DEMO-3",
+      dueDate: null,
+    };
+
+    expect([undated, later, earlier].sort(compareIssuesByDueDate).map(({ id }) => id)).toEqual([
+      "issue-one",
+      "issue-two",
+      "issue-undated",
+    ]);
   });
 });
 
