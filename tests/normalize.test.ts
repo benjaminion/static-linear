@@ -37,6 +37,27 @@ describe("normalizeSnapshot", () => {
     expect(snapshot.issues.two.parentId).toBe("one");
   });
 
+  it("omits archived issues from the public snapshot and project task lists", () => {
+    const active = rawIssue("active", "ACME-1", "archived");
+    const archived = rawIssue("archived", "ACME-2");
+    archived.archivedAt = "2026-01-02T12:00:00Z";
+    active.relations.nodes.push({
+      id: "relation-1",
+      type: "blocks",
+      issue: { id: "archived" },
+      relatedIssue: { id: "active" },
+    });
+
+    const snapshot = normalize([active, archived]);
+
+    expect(Object.keys(snapshot.issues)).toEqual(["active"]);
+    expect(snapshot.issues.active.parentId).toBeNull();
+    expect(snapshot.projects["project-1"].issueIds).toEqual(["active"]);
+    expect(snapshot.relations).toHaveLength(1);
+    expect(snapshot.relations[0].boundaryId).not.toBeNull();
+    expect(JSON.stringify(snapshot)).not.toContain("ACME-2");
+  });
+
   it("anonymizes issue relations that leave the initiative", () => {
     const issue = rawIssue("inside", "ACME-1");
     issue.inverseRelations.nodes.push({ id: "relation-1", type: "blocks", issue: { id: "secret-external-id" }, relatedIssue: { id: "inside" } });
@@ -84,4 +105,3 @@ describe("normalizeSnapshot", () => {
     expect(snapshot.initiative.descriptionHtml).not.toContain("https://example.com/secret");
   });
 });
-

@@ -53,11 +53,12 @@ export function normalizeSnapshot(input: {
   initiativeId: string;
   generatedAt?: string;
 }): PublicSnapshot {
-  const includedIssueIds = new Set(input.issues.map((issue) => issue.id));
+  const publicIssues = input.issues.filter((issue) => !issue.archivedAt);
+  const includedIssueIds = new Set(publicIssues.map((issue) => issue.id));
   const boundaries: PublicSnapshot["boundaries"] = {};
   const relationsById = new Map<string, PublicSnapshot["relations"][number]>();
 
-  for (const issue of input.issues) {
+  for (const issue of publicIssues) {
     for (const relation of [...issue.relations.nodes, ...issue.inverseRelations.nodes]) {
       if (relationsById.has(relation.id)) continue;
       const sourceId = publicEndpoint(relation.issue.id, includedIssueIds, boundaries);
@@ -76,7 +77,7 @@ export function normalizeSnapshot(input: {
   }
 
   const issues: PublicSnapshot["issues"] = {};
-  for (const issue of input.issues) {
+  for (const issue of publicIssues) {
     issues[issue.id] = {
       id: issue.id,
       identifier: issue.identifier,
@@ -128,7 +129,7 @@ export function normalizeSnapshot(input: {
       completedAt: project.completedAt ?? null,
       canceledAt: project.canceledAt ?? null,
       lead: normalizePerson(project.lead),
-      issueIds: input.issues.filter((issue) => issue.project.id === project.id).map((issue) => issue.id),
+      issueIds: publicIssues.filter((issue) => issue.project.id === project.id).map((issue) => issue.id),
       milestones: project.projectMilestones.nodes.map((milestone) => ({
         id: milestone.id,
         name: milestone.name,

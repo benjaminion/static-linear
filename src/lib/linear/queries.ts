@@ -65,7 +65,7 @@ export const ISSUES_QUERY = /* GraphQL */ `
     issues(
       first: 20
       after: $after
-      includeArchived: true
+      includeArchived: false
       filter: { project: { id: { in: $projectIds } } }
       orderBy: updatedAt
     ) {
