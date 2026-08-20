@@ -1,5 +1,5 @@
 export const SNAPSHOT_PATH = ".cache/linear-public.json";
-export const SCHEMA_VERSION = 1 as const;
+export const SCHEMA_VERSION = 2 as const;
 
 export const PRIORITY_LABELS: Record<number, string> = {
   0: "No priority",
@@ -8,4 +8,3 @@ export const PRIORITY_LABELS: Record<number, string> = {
   3: "Medium",
   4: "Low",
 };
-

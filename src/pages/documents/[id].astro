@@ -1,0 +1,36 @@
+---
+import type { GetStaticPaths } from "astro";
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import { readSnapshot } from "../../lib/snapshot";
+import { formatDateTime, projectHref } from "../../lib/view";
+
+export const getStaticPaths = (async () => {
+  const snapshot = await readSnapshot();
+  return Object.values(snapshot.documents).map((document) => ({
+    params: { id: document.id },
+    props: { document, snapshot },
+  }));
+}) satisfies GetStaticPaths;
+
+const { document, snapshot } = Astro.props;
+const parents = document.parentRefs.map((parent: { type: "initiative" | "project"; id: string }) => parent.type === "initiative"
+  ? { name: snapshot.initiative.name, href: "/" }
+  : { name: snapshot.projects[parent.id].name, href: projectHref(snapshot.projects[parent.id]) });
+---
+
+<BaseLayout title={`${document.title} · ${snapshot.initiative.name}`} generatedAt={snapshot.generatedAt}>
+  <header class="page-header document-header">
+    {parents.length === 1 && <a class="back-link" href={parents[0].href}>← {parents[0].name}</a>}
+    <div class="hero-heading">
+      <div><span class="eyebrow">Document</span><h1>{document.title}</h1></div>
+      <a class="button" href={document.url} target="_blank" rel="noopener noreferrer">Open in Linear ↗</a>
+    </div>
+    <div class="hero-meta">
+      <span>Updated {formatDateTime(document.updatedAt)}</span>
+      {parents.length > 1 && <span class="document-parents">Referenced from {parents.map((parent: { name: string; href: string }, index: number) => <><a href={parent.href}>{parent.name}</a>{index < parents.length - 1 ? " · " : ""}</>)}</span>}
+    </div>
+  </header>
+  <section class="content-section prose document-content">
+    {document.contentHtml ? <div set:html={document.contentHtml}></div> : <p class="empty-state">This document has no content.</p>}
+  </section>
+</BaseLayout>

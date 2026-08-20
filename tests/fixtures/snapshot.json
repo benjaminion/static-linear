@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "generatedAt": "2026-07-31T12:00:00.000Z",
   "source": {
     "initiativeId": "initiative-demo",
@@ -10,12 +10,16 @@
     "name": "Public launch programme",
     "url": "https://linear.app/example/initiative/public-launch",
     "summary": "A representative local snapshot used to verify the static build.",
-    "descriptionHtml": "<p>Public initiative overview used by the fixture build.</p>",
+    "descriptionHtml": "<p>Public initiative overview used by the fixture build. Read the <a href=\"/documents/document-initiative/\">launch brief</a>.</p>",
     "status": "Active",
     "health": "onTrack",
     "targetDate": "2026-11-30",
     "projectIds": ["project-alpha"],
-    "latestUpdate": { "id": "initiative-update-demo", "bodyHtml": "<p>Discovery is complete and delivery is on track.</p>", "createdAt": "2026-07-29T10:00:00.000Z", "health": "onTrack", "user": { "id": "user-demo", "name": "Project Lead" } }
+    "latestUpdate": { "id": "initiative-update-demo", "bodyHtml": "<p>Discovery is complete and delivery is on track.</p>", "createdAt": "2026-07-29T10:00:00.000Z", "health": "onTrack", "user": { "id": "user-demo", "name": "Project Lead" } },
+    "resources": [
+      { "type": "document", "documentId": "document-initiative", "sortOrder": 10 },
+      { "type": "external", "id": "resource-external", "label": "Public reference", "url": "https://example.com/reference", "sortOrder": 20 }
+    ]
   },
   "projects": {
     "project-alpha": {
@@ -36,7 +40,10 @@
       "milestones": [
         { "id": "milestone-demo", "name": "Public beta", "descriptionHtml": "<p>Ready for beta users.</p>", "targetDate": "2026-09-30" }
       ],
-      "latestUpdate": { "id": "project-update-demo", "bodyHtml": "<p>The foundation work has started.</p>", "createdAt": "2026-07-28T10:00:00.000Z", "health": "onTrack", "user": { "id": "user-demo", "name": "Project Lead" } }
+      "latestUpdate": { "id": "project-update-demo", "bodyHtml": "<p>The foundation work has started.</p>", "createdAt": "2026-07-28T10:00:00.000Z", "health": "onTrack", "user": { "id": "user-demo", "name": "Project Lead" } },
+      "resources": [
+        { "type": "document", "documentId": "document-project", "sortOrder": 5 }
+      ]
     }
   },
   "issues": {
@@ -85,6 +92,26 @@
       "canceledAt": null,
       "archivedAt": null,
       "comments": []
+    }
+  },
+  "documents": {
+    "document-initiative": {
+      "id": "document-initiative",
+      "slugId": "111111111111",
+      "title": "Launch brief",
+      "url": "https://linear.app/example/document/launch-brief-111111111111",
+      "contentHtml": "<h2>Goals</h2><p>Coordinate the public launch and read the <a href=\"/documents/document-project/\">delivery notes</a>.</p>",
+      "updatedAt": "2026-07-30T10:00:00.000Z",
+      "parentRefs": [{ "type": "initiative", "id": "initiative-demo" }]
+    },
+    "document-project": {
+      "id": "document-project",
+      "slugId": "222222222222",
+      "title": "Delivery notes",
+      "url": "https://linear.app/example/document/delivery-notes-222222222222",
+      "contentHtml": "<h2>Plan</h2><ul><li>Build</li><li>Review</li></ul>",
+      "updatedAt": "2026-07-29T10:00:00.000Z",
+      "parentRefs": [{ "type": "project", "id": "project-alpha" }]
     }
   },
   "relations": [

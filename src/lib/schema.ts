@@ -28,6 +28,35 @@ export const commentSchema = z.object({
   user: personSchema.nullable(),
 });
 
+const documentResourceSchema = z.object({
+  type: z.literal("document"),
+  documentId: z.string(),
+  sortOrder: z.number(),
+});
+
+const externalResourceSchema = z.object({
+  type: z.literal("external"),
+  id: z.string(),
+  label: z.string(),
+  url: z.string().url(),
+  sortOrder: z.number(),
+});
+
+export const resourceSchema = z.discriminatedUnion("type", [documentResourceSchema, externalResourceSchema]);
+
+export const documentSchema = z.object({
+  id: z.string(),
+  slugId: z.string(),
+  title: z.string(),
+  url: z.string().url(),
+  contentHtml: z.string(),
+  updatedAt: z.string(),
+  parentRefs: z.array(z.object({
+    type: z.enum(["initiative", "project"]),
+    id: z.string(),
+  })),
+});
+
 export const issueSchema = z.object({
   id: z.string(),
   identifier: z.string(),
@@ -74,6 +103,7 @@ export const projectSchema = z.object({
     targetDate: nullableDate,
   })),
   latestUpdate: statusUpdateSchema.nullable(),
+  resources: z.array(resourceSchema),
 });
 
 export const relationSchema = z.object({
@@ -85,7 +115,7 @@ export const relationSchema = z.object({
 });
 
 export const publicSnapshotSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   generatedAt: z.string(),
   source: z.object({
     initiativeId: z.string(),
@@ -102,9 +132,11 @@ export const publicSnapshotSchema = z.object({
     targetDate: nullableDate,
     projectIds: z.array(z.string()),
     latestUpdate: statusUpdateSchema.nullable(),
+    resources: z.array(resourceSchema),
   }),
   projects: z.record(z.string(), projectSchema),
   issues: z.record(z.string(), issueSchema),
+  documents: z.record(z.string(), documentSchema),
   relations: z.array(relationSchema),
   boundaries: z.record(z.string(), z.object({
     id: z.string(),
@@ -115,4 +147,6 @@ export const publicSnapshotSchema = z.object({
 export type PublicSnapshot = z.infer<typeof publicSnapshotSchema>;
 export type PublicProject = z.infer<typeof projectSchema>;
 export type PublicIssue = z.infer<typeof issueSchema>;
+export type PublicDocument = z.infer<typeof documentSchema>;
+export type PublicResource = z.infer<typeof resourceSchema>;
 export type PublicRelation = z.infer<typeof relationSchema>;

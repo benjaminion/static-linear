@@ -85,6 +85,13 @@ p { line-height: 1.55; }
 .prose :not(pre) > code { padding: .15em .3em; background: #e8e6df; }
 .prose blockquote { margin-left: 0; padding-left: 1.2rem; border-left: 3px solid var(--accent); color: var(--muted); }
 .prose table { width: 100%; border-collapse: collapse; }
+.document-content { margin-top: 1rem; }
+.document-parents a { color: inherit; }
+.resource-list { display: grid; gap: .35rem; margin: 0; padding: 0; list-style: none; }
+.resource-list li { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr) auto; align-items: center; gap: .65rem; padding: .65rem .75rem; border: 1px solid var(--line); background: var(--surface); font-size: .82rem; }
+.resource-list a { overflow-wrap: anywhere; font-weight: 650; text-decoration: none; }
+.resource-list a:hover { color: var(--teal); }
+.resource-kind { color: var(--muted); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: .65rem; letter-spacing: .08em; text-transform: uppercase; }
 .compact { font-size: .9rem; }
 .private-asset { display: inline-flex; padding: .25rem .45rem; border: 1px dashed var(--accent); color: var(--accent-dark); font-size: .8rem; }
 .update-card { max-width: 52rem; padding: 1rem; border: 1px solid var(--line); background: var(--surface); box-shadow: var(--shadow); }

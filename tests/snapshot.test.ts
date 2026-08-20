@@ -17,8 +17,7 @@ describe("snapshot persistence", () => {
   it("rejects invalid snapshots before replacing the destination", async () => {
     const fixture = await readSnapshot("tests/fixtures/snapshot.json");
     await writeSnapshotAtomic(fixture, temporaryPath);
-    await expect(writeSnapshotAtomic({ ...fixture, schemaVersion: 2 } as never, temporaryPath)).rejects.toThrow();
-    expect((await readSnapshot(temporaryPath)).schemaVersion).toBe(1);
+    await expect(writeSnapshotAtomic({ ...fixture, schemaVersion: 3 } as never, temporaryPath)).rejects.toThrow();
+    expect((await readSnapshot(temporaryPath)).schemaVersion).toBe(2);
   });
 });
-

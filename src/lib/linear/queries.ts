@@ -9,6 +9,21 @@ export const INITIATIVE_BODY_QUERY = /* GraphQL */ `
   }
 `;
 
+export const DOCUMENT_EXPORT_QUERY = /* GraphQL */ `
+  query ExportLinearDocument($id: String!) {
+    document(id: $id) {
+      id
+      title
+      content
+      slugId
+      url
+      archivedAt
+      updatedAt
+      sortOrder
+    }
+  }
+`;
+
 export const INITIATIVE_QUERY = /* GraphQL */ `
   query PublicInitiative($id: String!, $after: String) {
     initiative(id: $id) {
@@ -43,6 +58,80 @@ export const INITIATIVE_QUERY = /* GraphQL */ `
             pageInfo { hasNextPage endCursor }
           }
         }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+`;
+
+export const INITIATIVE_RESOURCES_QUERY = /* GraphQL */ `
+  query PublicInitiativeResources($id: String!) {
+    initiative(id: $id) {
+      documents(first: 50, includeArchived: false) {
+        nodes { id title content slugId url archivedAt updatedAt sortOrder }
+        pageInfo { hasNextPage endCursor }
+      }
+      links(first: 50, includeArchived: false) {
+        nodes { id label url archivedAt sortOrder }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+`;
+
+export const PROJECT_RESOURCES_QUERY = /* GraphQL */ `
+  query PublicProjectResources($id: String!) {
+    project(id: $id) {
+      documents(first: 50, includeArchived: false) {
+        nodes { id title content slugId url archivedAt updatedAt sortOrder }
+        pageInfo { hasNextPage endCursor }
+      }
+      externalLinks(first: 50, includeArchived: false) {
+        nodes { id label url archivedAt sortOrder }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+`;
+
+export const INITIATIVE_DOCUMENTS_QUERY = /* GraphQL */ `
+  query PublicInitiativeDocuments($id: String!, $after: String) {
+    initiative(id: $id) {
+      documents(first: 50, after: $after, includeArchived: false) {
+        nodes { id title content slugId url archivedAt updatedAt sortOrder }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+`;
+
+export const INITIATIVE_LINKS_QUERY = /* GraphQL */ `
+  query PublicInitiativeLinks($id: String!, $after: String) {
+    initiative(id: $id) {
+      links(first: 50, after: $after, includeArchived: false) {
+        nodes { id label url archivedAt sortOrder }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+`;
+
+export const PROJECT_DOCUMENTS_QUERY = /* GraphQL */ `
+  query PublicProjectDocuments($id: String!, $after: String) {
+    project(id: $id) {
+      documents(first: 50, after: $after, includeArchived: false) {
+        nodes { id title content slugId url archivedAt updatedAt sortOrder }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+`;
+
+export const PROJECT_LINKS_QUERY = /* GraphQL */ `
+  query PublicProjectLinks($id: String!, $after: String) {
+    project(id: $id) {
+      externalLinks(first: 50, after: $after, includeArchived: false) {
+        nodes { id label url archivedAt sortOrder }
         pageInfo { hasNextPage endCursor }
       }
     }

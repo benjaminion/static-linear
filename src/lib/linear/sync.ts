@@ -1,21 +1,35 @@
 import { config as loadDotEnv } from "dotenv";
 import { LinearGraphQLClient } from "./client";
 import {
+  DOCUMENT_EXPORT_QUERY,
+  INITIATIVE_DOCUMENTS_QUERY,
+  INITIATIVE_LINKS_QUERY,
   INITIATIVE_QUERY,
+  INITIATIVE_RESOURCES_QUERY,
   ISSUE_DETAIL_PAGE_QUERY,
   ISSUES_QUERY,
+  PROJECT_DOCUMENTS_QUERY,
+  PROJECT_LINKS_QUERY,
   PROJECT_MILESTONES_QUERY,
+  PROJECT_RESOURCES_QUERY,
 } from "./queries";
 import {
   normalizeSnapshot,
   type RawComment,
   type RawConnection,
+  type RawDocument,
+  type RawExternalResource,
   type RawInitiative,
   type RawIssue,
   type RawMilestone,
   type RawProject,
   type RawRelation,
 } from "./normalize";
+import {
+  linearDocumentIdentifierFromUrl,
+  linearDocumentSlugId,
+  writeLinearDocumentExports,
+} from "./document-export";
 import { writeSnapshotAtomic } from "../snapshot";
 import type { PublicSnapshot } from "../schema";
 
@@ -42,9 +56,14 @@ export async function syncLinearSnapshot(options: {
   const issues = projects.length ? await fetchIssues(client, projects.map((project) => project.id)) : [];
   await fillOverflowConnections(client, issues);
   await fillMilestoneOverflow(client, projects);
+  await fillResourceOverflow(client, initiative, projects);
+  await resolveLinearDocumentResources(client, initiative, projects);
 
   const snapshot = normalizeSnapshot({ initiative, projects, issues, initiativeId });
-  if (options.write !== false) await writeSnapshotAtomic(snapshot);
+  if (options.write !== false) {
+    await writeSnapshotAtomic(snapshot);
+    await writeLinearDocumentExports(collectDocuments(initiative, projects));
+  }
   return snapshot;
 }
 
@@ -152,6 +171,117 @@ async function fillMilestoneOverflow(client: LinearGraphQLClient, projects: RawP
       project.projectMilestones.pageInfo.hasNextPage = false;
     },
   );
+}
+
+async function fillResourceOverflow(
+  client: LinearGraphQLClient,
+  initiative: RawInitiative,
+  projects: RawProject[],
+): Promise<void> {
+  const initiativeData = await client.request<{
+    initiative: { documents: RawConnection<RawDocument>; links: RawConnection<RawExternalResource> };
+  }>(INITIATIVE_RESOURCES_QUERY, { id: initiative.id }, "PublicInitiativeResources");
+  initiative.documents = initiativeData.initiative.documents;
+  initiative.links = initiativeData.initiative.links;
+  await Promise.all([
+    fillConnectionPages(initiative.documents, "initiative documents", async (after) => {
+      const data = await client.request<{ initiative: { documents: RawConnection<RawDocument> } }>(
+        INITIATIVE_DOCUMENTS_QUERY, { id: initiative.id, after }, "PublicInitiativeDocuments",
+      );
+      return data.initiative.documents;
+    }),
+    fillConnectionPages(initiative.links, "initiative links", async (after) => {
+      const data = await client.request<{ initiative: { links: RawConnection<RawExternalResource> } }>(
+        INITIATIVE_LINKS_QUERY, { id: initiative.id, after }, "PublicInitiativeLinks",
+      );
+      return data.initiative.links;
+    }),
+  ]);
+
+  await mapWithConcurrency(projects, 4, async (project) => {
+    const data = await client.request<{
+      project: { documents: RawConnection<RawDocument>; externalLinks: RawConnection<RawExternalResource> };
+    }>(PROJECT_RESOURCES_QUERY, { id: project.id }, "PublicProjectResources");
+    project.documents = data.project.documents;
+    project.externalLinks = data.project.externalLinks;
+    await Promise.all([
+      fillConnectionPages(project.documents, `documents for ${project.name}`, async (after) => {
+        const data = await client.request<{ project: { documents: RawConnection<RawDocument> } }>(
+          PROJECT_DOCUMENTS_QUERY, { id: project.id, after }, "PublicProjectDocuments",
+        );
+        return data.project.documents;
+      }),
+      fillConnectionPages(project.externalLinks, `links for ${project.name}`, async (after) => {
+        const data = await client.request<{ project: { externalLinks: RawConnection<RawExternalResource> } }>(
+          PROJECT_LINKS_QUERY, { id: project.id, after }, "PublicProjectLinks",
+        );
+        return data.project.externalLinks;
+      }),
+    ]);
+  });
+}
+
+async function fillConnectionPages<T>(
+  connection: RawConnection<T>,
+  resource: string,
+  fetchPage: (after: string) => Promise<RawConnection<T>>,
+): Promise<void> {
+  let cursor = connection.pageInfo.hasNextPage ? requireCursor(connection.pageInfo.endCursor, resource) : null;
+  while (cursor) {
+    const page = await fetchPage(cursor);
+    connection.nodes.push(...page.nodes);
+    cursor = page.pageInfo.hasNextPage ? requireCursor(page.pageInfo.endCursor, resource) : null;
+  }
+  connection.pageInfo = { hasNextPage: false, endCursor: connection.pageInfo.endCursor };
+}
+
+async function resolveLinearDocumentResources(
+  client: LinearGraphQLClient,
+  initiative: RawInitiative,
+  projects: RawProject[],
+): Promise<void> {
+  const knownDocuments = collectDocuments(initiative, projects);
+  const documentsBySlugId = new Map(knownDocuments.map((document) => [document.slugId.toLowerCase(), document]));
+  const resources = [
+    ...(initiative.links?.nodes ?? []),
+    ...projects.flatMap((project) => project.externalLinks?.nodes ?? []),
+  ];
+  const pending = new Map<string, { identifier: string; resources: RawExternalResource[] }>();
+
+  for (const resource of resources) {
+    const identifier = linearDocumentIdentifierFromUrl(resource.url);
+    const slugId = identifier ? linearDocumentSlugId(identifier) : null;
+    if (!identifier || !slugId) continue;
+    const known = documentsBySlugId.get(slugId);
+    if (known) {
+      resource.document = known;
+      continue;
+    }
+    const entry = pending.get(slugId) ?? { identifier, resources: [] };
+    entry.resources.push(resource);
+    pending.set(slugId, entry);
+  }
+
+  await mapWithConcurrency([...pending.entries()], 4, async ([slugId, entry]) => {
+    const data = await client.request<{ document: RawDocument }>(
+      DOCUMENT_EXPORT_QUERY,
+      { id: entry.identifier },
+      "ExportLinearDocument",
+    );
+    documentsBySlugId.set(slugId, data.document);
+    for (const resource of entry.resources) resource.document = data.document;
+  });
+}
+
+function collectDocuments(initiative: RawInitiative, projects: RawProject[]): RawDocument[] {
+  const documents = [
+    ...(initiative.documents?.nodes ?? []),
+    ...projects.flatMap((project) => project.documents?.nodes ?? []),
+    ...(initiative.links?.nodes ?? []).flatMap((resource) => resource.document ? [resource.document] : []),
+    ...projects.flatMap((project) =>
+      (project.externalLinks?.nodes ?? []).flatMap((resource) => resource.document ? [resource.document] : [])),
+  ];
+  return [...new Map(documents.map((document) => [document.id, document])).values()];
 }
 
 function requireCursor(cursor: string | null, resource: string): string {

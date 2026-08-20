@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeSnapshot, type RawIssue, type RawProject } from "../src/lib/linear/normalize";
+import { normalizeSnapshot, type RawDocument, type RawIssue, type RawProject } from "../src/lib/linear/normalize";
 import { dependencyCycles } from "../src/lib/view";
 
 const pageInfo = { hasNextPage: false, endCursor: null };
@@ -103,5 +103,49 @@ describe("normalizeSnapshot", () => {
     expect(snapshot.initiative.descriptionHtml).toContain("private notes");
     expect(snapshot.initiative.descriptionHtml).not.toContain("private notes*");
     expect(snapshot.initiative.descriptionHtml).not.toContain("https://example.com/secret");
+  });
+
+  it("normalizes ordered resources and rewrites links to exported documents throughout prose", () => {
+    const initiativeDocument: RawDocument = {
+      id: "doc-initiative", title: "Initiative brief", content: "See the [project notes](https://linear.app/acme/document/project-notes-bbbbbbbbbbbb).",
+      slugId: "aaaaaaaaaaaa", url: "https://linear.app/acme/document/initiative-brief-aaaaaaaaaaaa",
+      archivedAt: null, updatedAt: "2026-01-03T00:00:00Z", sortOrder: 20,
+    };
+    const projectDocument: RawDocument = {
+      id: "doc-project", title: "Project notes", content: "## Notes",
+      slugId: "bbbbbbbbbbbb", url: "https://linear.app/acme/document/project-notes-bbbbbbbbbbbb",
+      archivedAt: null, updatedAt: "2026-01-03T00:00:00Z", sortOrder: 10,
+    };
+    const project = rawProject();
+    project.content = "Read the [initiative brief](https://linear.app/acme/document/initiative-brief-aaaaaaaaaaaa).";
+    project.documents = { nodes: [projectDocument], pageInfo };
+    project.externalLinks = {
+      nodes: [{ id: "external", label: "Reference", url: "https://example.com", sortOrder: 5 }],
+      pageInfo,
+    };
+    const issue = rawIssue("one", "ACME-1");
+    issue.description = "[Brief](https://linear.app/acme/document/initiative-brief-aaaaaaaaaaaa) and [private brief*](https://linear.app/acme/document/initiative-brief-aaaaaaaaaaaa).";
+
+    const snapshot = normalizeSnapshot({
+      initiativeId: "initiative-1",
+      generatedAt: "2026-01-03T00:00:00Z",
+      initiative: {
+        id: "initiative-1", name: "Initiative", url: "https://linear.app/acme/initiative/one", status: "Active",
+        content: "Read the [brief](https://linear.app/acme/document/initiative-brief-aaaaaaaaaaaa).",
+        documents: { nodes: [initiativeDocument], pageInfo },
+        links: { nodes: [], pageInfo },
+      },
+      projects: [project],
+      issues: [issue],
+    });
+
+    expect(snapshot.initiative.resources).toEqual([{ type: "document", documentId: "doc-initiative", sortOrder: 20 }]);
+    expect(snapshot.projects["project-1"].resources.map((resource) => resource.type)).toEqual(["external", "document"]);
+    expect(snapshot.initiative.descriptionHtml).toContain('href="/documents/doc-initiative/"');
+    expect(snapshot.projects["project-1"].descriptionHtml).toContain('href="/documents/doc-initiative/"');
+    expect(snapshot.issues.one.descriptionHtml).toContain('href="/documents/doc-initiative/"');
+    expect(snapshot.issues.one.descriptionHtml).not.toContain("private brief*");
+    expect(snapshot.documents["doc-initiative"].contentHtml).toContain('href="/documents/doc-project/"');
+    expect(snapshot.documents["doc-project"].parentRefs).toEqual([{ type: "project", id: "project-1" }]);
   });
 });

@@ -11,6 +11,7 @@
     "deploy:rebuild": "npm run build && npm run deploy",
     "preview": "astro preview",
     "sync": "tsx scripts/sync.ts",
+    "pull:document": "tsx scripts/pull-linear-document.ts",
     "check": "astro check",
     "test": "vitest run",
     "test:watch": "vitest"

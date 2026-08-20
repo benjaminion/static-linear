@@ -1,0 +1,27 @@
+---
+import type { PublicResource, PublicSnapshot } from "../lib/schema";
+import { documentHref } from "../lib/view";
+
+interface Props {
+  resources: PublicResource[];
+  snapshot: PublicSnapshot;
+}
+
+const { resources, snapshot } = Astro.props;
+---
+
+<ul class="resource-list">
+  {resources.map((resource) => resource.type === "document" ? (
+    <li>
+      <span class="resource-kind">Document</span>
+      <a href={documentHref(snapshot.documents[resource.documentId])}>{snapshot.documents[resource.documentId].title}</a>
+      <span aria-hidden="true">→</span>
+    </li>
+  ) : (
+    <li>
+      <span class="resource-kind">External</span>
+      <a href={resource.url} target="_blank" rel="noopener noreferrer">{resource.label}</a>
+      <span aria-hidden="true">↗</span>
+    </li>
+  ))}
+</ul>

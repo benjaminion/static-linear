@@ -1,4 +1,4 @@
-import type { PublicIssue, PublicProject, PublicSnapshot } from "./schema";
+import type { PublicDocument, PublicIssue, PublicProject, PublicSnapshot } from "./schema";
 
 const projectNameCollator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
 
@@ -34,6 +34,10 @@ export function issueHref(issue: Pick<PublicIssue, "id">): string {
 
 export function projectHref(project: Pick<PublicProject, "id">): string {
   return `/projects/${encodeURIComponent(project.id)}/`;
+}
+
+export function documentHref(document: Pick<PublicDocument, "id">): string {
+  return `/documents/${encodeURIComponent(document.id)}/`;
 }
 
 export function compareProjects(a: PublicProject, b: PublicProject): number {

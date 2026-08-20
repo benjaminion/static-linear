@@ -1,6 +1,7 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
 import Metric from "../components/Metric.astro";
+import ResourceList from "../components/ResourceList.astro";
 import { readSnapshot } from "../lib/snapshot";
 import { formatDate, formatDateTime, initiativeProjects, projectHref, statusClass } from "../lib/view";
 
@@ -40,6 +41,13 @@ const initiativeOverview = snapshot.initiative.descriptionHtml;
     <section class="content-section prose">
       <div class="section-heading"><div><span class="eyebrow">Context</span><h2>About this initiative</h2></div></div>
       <div set:html={initiativeOverview}></div>
+    </section>
+  )}
+
+  {snapshot.initiative.resources.length > 0 && (
+    <section class="content-section">
+      <div class="section-heading"><div><span class="eyebrow">References</span><h2>Resources</h2></div></div>
+      <ResourceList resources={snapshot.initiative.resources} snapshot={snapshot} />
     </section>
   )}
 

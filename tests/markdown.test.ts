@@ -31,6 +31,15 @@ describe("renderPublicMarkdown", () => {
     expect(html).toContain('rel="noopener noreferrer"');
   });
 
+  it("rewrites selected links as same-tab local links", () => {
+    const html = renderPublicMarkdown(
+      "[brief](https://linear.app/acme/document/brief-aaaaaaaaaaaa) and [other](https://example.com)",
+      { rewriteHref: (href) => href.includes("brief-aaaaaaaaaaaa") ? "/documents/doc-1/" : href },
+    );
+    expect(html).toContain('<a href="/documents/doc-1/">brief</a>');
+    expect(html).toContain('<a href="https://example.com" target="_blank" rel="noopener noreferrer">other</a>');
+  });
+
   it("renders a star-suffixed Linear link as plain text", () => {
     const html = renderPublicMarkdown("Read [internal planning*](https://example.com/private).");
     expect(html).toContain("Read internal planning.");

@@ -32,13 +32,18 @@ constraints, verification commands), see `AGENTS.md`.
   the whole graph in place, dims unrelated nodes and edges, and dashes dependencies
   that cross the project boundary. Layout lives in `src/lib/dependency-layout.ts`.
 - **Project and task details / search** — detail and discovery views over the snapshot.
+- **Resources and documents** — initiative/project resources retain their Linear
+  ordering. Linear-hosted documents are exported to private ignored Markdown,
+  rendered at stable `/documents/{id}/` routes, and included in search without a
+  separate document index.
 
 ## Commands
 
 - `npx astro build` — refresh Linear data and generate `dist/`.
 - `npx astro dev` — serve the cached snapshot without contacting Linear.
 - `npx astro preview` — serve the production output.
-- `npm run sync` — refresh and validate the snapshot without building.
+- `npm run sync` — refresh and validate the snapshot and private Markdown document exports without building.
+- `npm run pull:document` — export one Linear document to Markdown; accepts an optional document URL/slug and output path.
 - `npm run build:cached` — build offline from the last valid snapshot.
 - `npm run deploy` — deploy the existing `dist/` output to Cloudflare without rebuilding or contacting Linear.
 - `npm run deploy:rebuild` — refresh from Linear, rebuild `dist/`, and deploy it to Cloudflare.
@@ -47,7 +52,11 @@ constraints, verification commands), see `AGENTS.md`.
 For API maintenance, download Linear's public `schema.graphql` and run
 `npx tsx scripts/validate-queries.ts /path/to/schema.graphql` to validate every query without contacting a workspace.
 
-The cached snapshot, build output, and all `.env` files are ignored by Git. The snapshot is intentionally public-safe but still contains task descriptions and comments; review `dist/` before publishing it.
+The cached snapshot, private `.cache/linear-documents/` Markdown exports, build
+output, and all `.env` files are ignored by Git. Raw document Markdown is never
+copied into `dist/`; document pages use the sanitized HTML in the validated
+snapshot. The snapshot is intentionally public-safe but still contains task
+descriptions, comments, and document content; review `dist/` before publishing it.
 
 ## Protected deployment
 

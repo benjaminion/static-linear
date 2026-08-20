@@ -9,6 +9,7 @@ const HTML_LINK = /<a\b[^>]*>([\s\S]*?)<\/a>/gi;
 
 interface MarkdownOptions {
   stripStarredLinks?: boolean;
+  rewriteHref?: (href: string) => string;
 }
 
 export function renderPublicMarkdown(
@@ -51,8 +52,19 @@ export function renderPublicMarkdown(
             },
           };
         }
+        const href = options.rewriteHref?.(attribs.href) ?? attribs.href;
+        if (href.startsWith("/") || href.startsWith("#")) {
+          const localAttributes: sanitizeHtml.Attributes = { ...attribs, href };
+          delete localAttributes.target;
+          delete localAttributes.rel;
+          return {
+            tagName: "a",
+            attribs: localAttributes,
+          };
+        }
         const hardenedAttributes: sanitizeHtml.Attributes = {
           ...attribs,
+          href,
           target: "_blank",
           rel: "noopener noreferrer",
         };
