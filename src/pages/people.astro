@@ -89,12 +89,20 @@ const unassignedCount = (groupsByKey.get("unassigned")?.projects.length ?? 0)
       <span aria-live="polite" data-people-summary>{projects.length} project{projects.length === 1 ? "" : "s"} · {issues.length} task{issues.length === 1 ? "" : "s"}</span>
     </div>
     <div class="toolbar people-toolbar" aria-label="People filters">
-      <label>Owner
-        <select data-owner-filter>
-          <option value="all">All owners</option>
-          {groups.map((group) => <option value={group.key}>{group.name}</option>)}
-        </select>
-      </label>
+      <div class="people-select-filters">
+        <label>Owner
+          <select data-owner-filter>
+            <option value="all">All owners</option>
+            {groups.map((group) => <option value={group.key}>{group.name}</option>)}
+          </select>
+        </label>
+        <label>Project
+          <select data-project-filter>
+            <option value="all">All projects</option>
+            {projects.map((project) => <option value={project.id}>{project.name}</option>)}
+          </select>
+        </label>
+      </div>
       <fieldset class="status-filter" data-status-filter>
         <legend>Task statuses <span>Any selected</span></legend>
         <div class="status-filter__options">
@@ -126,7 +134,7 @@ const unassignedCount = (groupsByKey.get("unassigned")?.projects.length ?? 0)
               <h4>Projects</h4>
               <ol class="people-list">
                 {group.projects.map((project) => (
-                  <li data-work-item data-kind="project">
+                  <li data-work-item data-kind="project" data-project-id={project.id}>
                     <div class="people-list__main"><a href={projectHref(project)}>{project.name}</a><span class={statusClass(project.status.type)}>{project.status.name}</span></div>
                     <span class="people-date"><span>Target</span> {formatDate(project.targetDate)}</span>
                   </li>
@@ -138,7 +146,7 @@ const unassignedCount = (groupsByKey.get("unassigned")?.projects.length ?? 0)
               <h4>Tasks</h4>
               <ol class="people-list">
                 {group.issues.map((issue) => (
-                  <li data-work-item data-kind="task" data-status={issue.state.name}>
+                  <li data-work-item data-kind="task" data-status={issue.state.name} data-project-id={issue.projectId}>
                     <div class="people-list__main">
                       <a href={issueHref(issue)}><span class="issue-identifier">{issue.identifier}</span> {issue.title}</a>
                       <span class={statusClass(issue.state.type)}>{issue.state.name}</span>
@@ -154,7 +162,7 @@ const unassignedCount = (groupsByKey.get("unassigned")?.projects.length ?? 0)
                   </li>
                 ))}
               </ol>
-              <p class="people-empty" data-task-empty hidden={group.issues.length !== 0}>No tasks match this status.</p>
+              <p class="people-empty" data-task-empty hidden={group.issues.length !== 0}>No tasks match these filters.</p>
             </div>
           </div>
         </section>
@@ -167,10 +175,11 @@ const unassignedCount = (groupsByKey.get("unassigned")?.projects.length ?? 0)
 <script>
   document.querySelectorAll<HTMLElement>("[data-people]").forEach((root) => {
     const ownerFilter = root.querySelector<HTMLSelectElement>("[data-owner-filter]");
+    const projectFilter = root.querySelector<HTMLSelectElement>("[data-project-filter]");
     const statusButtons = [...root.querySelectorAll<HTMLButtonElement>("[data-status-filter] [data-status]")];
     const summary = root.querySelector<HTMLElement>("[data-people-summary]");
     const noResults = root.querySelector<HTMLElement>("[data-no-results]");
-    if (!ownerFilter || !summary || !noResults) return;
+    if (!ownerFilter || !projectFilter || !summary || !noResults) return;
 
     const render = () => {
       let visibleProjects = 0;
@@ -183,9 +192,13 @@ const unassignedCount = (groupsByKey.get("unassigned")?.projects.length ?? 0)
         const ownerMatches = ownerFilter.value === "all" || group.dataset.ownerGroup === ownerFilter.value;
         const projects = [...group.querySelectorAll<HTMLElement>('[data-work-item][data-kind="project"]')];
         const tasks = [...group.querySelectorAll<HTMLElement>('[data-work-item][data-kind="task"]')];
-        for (const project of projects) project.hidden = !ownerMatches;
+        for (const project of projects) {
+          const projectMatches = projectFilter.value === "all" || project.dataset.projectId === projectFilter.value;
+          project.hidden = !ownerMatches || !projectMatches;
+        }
         for (const task of tasks) {
-          task.hidden = !ownerMatches || !activeStatuses.has(task.dataset.status);
+          const projectMatches = projectFilter.value === "all" || task.dataset.projectId === projectFilter.value;
+          task.hidden = !ownerMatches || !projectMatches || !activeStatuses.has(task.dataset.status);
         }
         const projectCount = projects.filter((item) => !item.hidden).length;
         const taskCount = tasks.filter((item) => !item.hidden).length;
@@ -204,6 +217,7 @@ const unassignedCount = (groupsByKey.get("unassigned")?.projects.length ?? 0)
       noResults.hidden = visibleGroups !== 0;
     };
     ownerFilter.addEventListener("change", render);
+    projectFilter.addEventListener("change", render);
     for (const button of statusButtons) {
       button.addEventListener("click", () => {
         button.setAttribute("aria-pressed", String(button.getAttribute("aria-pressed") !== "true"));

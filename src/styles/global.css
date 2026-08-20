@@ -227,6 +227,7 @@ tbody th { font-weight: 600; }
 
 .people-heading { margin-bottom: .65rem; }
 .people-toolbar { justify-content: space-between; padding: .7rem; border: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 78%, transparent); }
+.people-select-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .65rem; }
 .status-filter { min-width: 0; margin: 0; padding: 0; border: 0; }
 .status-filter legend { margin-bottom: .35rem; padding: 0; color: var(--muted); font-size: .72rem; }
 .status-filter legend span { margin-left: .3rem; color: color-mix(in srgb, var(--muted) 65%, transparent); font-size: .65rem; }
