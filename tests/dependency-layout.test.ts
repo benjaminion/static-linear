@@ -6,11 +6,100 @@ import {
   layoutDependencyNodes,
   routeClearance,
   routeDependencyEdges,
+  type RoutedDependencyEdge,
 } from "../src/lib/dependency-layout";
+import topology from "./fixtures/dependency-topology.json";
 
 const RADIUS = 28;
 
+// Independent dense sampling guards against optimizing a coarse crossing metric
+// while leaving visible crossings in the actual curves.
+function sampledCrossings(routes: RoutedDependencyEdge[]): number {
+  const paths = routes.map((route) => route.segments.flatMap((segment, i) =>
+    Array.from({ length: 81 }, (_, j) => cubicPoint(segment, j / 80)).slice(i ? 1 : 0)));
+  const orient = (a: { x: number; y: number }, b: typeof a, c: typeof a) =>
+    (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+  let crossings = 0;
+  for (let i = 0; i < paths.length; i += 1) {
+    for (let j = i + 1; j < paths.length; j += 1) {
+      const a = paths[i], b = paths[j];
+      let crossed = false;
+      for (let k = 1; k < a.length && !crossed; k += 1) {
+        for (let l = 1; l < b.length; l += 1) {
+          if (orient(a[k - 1], a[k], b[l - 1]) * orient(a[k - 1], a[k], b[l]) < -1e-8
+            && orient(b[l - 1], b[l], a[k - 1]) * orient(b[l - 1], b[l], a[k]) < -1e-8) {
+            crossed = true;
+            break;
+          }
+        }
+      }
+      if (crossed) crossings += 1;
+    }
+  }
+  return crossings;
+}
+
+function expectSmoothJoins(routes: RoutedDependencyEdge[]) {
+  for (const route of routes) {
+    for (let i = 1; i < route.segments.length; i += 1) {
+      const previous = route.segments[i - 1], next = route.segments[i];
+      expect(previous[3]).toEqual(next[0]);
+      const out = { x: previous[3].x - previous[2].x, y: previous[3].y - previous[2].y };
+      const into = { x: next[1].x - next[0].x, y: next[1].y - next[0].y };
+      expect((out.x * into.x + out.y * into.y) / (Math.hypot(out.x, out.y) * Math.hypot(into.x, into.y))).toBeCloseTo(1, 6);
+    }
+  }
+}
+
+function expectSeparateHorizontalRuns(routes: RoutedDependencyEdge[]) {
+  for (let i = 0; i < routes.length; i += 1) {
+    for (let j = i + 1; j < routes.length; j += 1) {
+      for (const a of routes[i].segments) {
+        if (!a.every((point) => Math.abs(point.y - a[0].y) < .01)) continue;
+        for (const b of routes[j].segments) {
+          if (!b.every((point) => Math.abs(point.y - b[0].y) < .01)) continue;
+          const overlap = Math.min(Math.max(a[0].x, a[3].x), Math.max(b[0].x, b[3].x))
+            - Math.max(Math.min(a[0].x, a[3].x), Math.min(b[0].x, b[3].x));
+          if (overlap > 30) expect(Math.abs(a[0].y - b[0].y)).toBeGreaterThanOrEqual(8 - 1e-6);
+        }
+      }
+    }
+  }
+}
+
+describe("countRouteCrossings", () => {
+  it("counts crossings away from a shared source or target", () => {
+    const routes: RoutedDependencyEdge[] = [
+      { source: "hub", target: "a", d: "", segments: [[{ x: 0, y: 0 }, { x: 40, y: 50 }, { x: 80, y: -80 }, { x: 120, y: -10 }]] },
+      { source: "hub", target: "b", d: "", segments: [[{ x: 0, y: 0 }, { x: 40, y: 7 }, { x: 80, y: 14 }, { x: 120, y: 21 }]] },
+    ];
+    expect(sampledCrossings(routes)).toBe(1);
+    expect(countRouteCrossings(routes)).toBe(1);
+    expect(countRouteCrossings(routes.map((route) => ({
+      ...route,
+      source: route.target,
+      target: route.source,
+      segments: route.segments.map(([a, b, c, d]) => [d, c, b, a]),
+    })))).toBe(1);
+  });
+});
+
 describe("routeDependencyEdges", () => {
+  it("untangles the published convergence and fan-out without moving nodes", () => {
+    // Geometry and topology only, extracted from the published Tasks page; no
+    // descriptions, comments, credentials, or raw API responses in the fixture.
+    const routes = routeDependencyEdges(topology.positions, topology.edges).routes;
+    const id = (label: string) => topology.nodes.find((node) => node.label === label)!.id;
+    expect(sampledCrossings(routes.filter((route) => route.target === id("FIN-67")))).toBe(0);
+    expect(sampledCrossings(routes.filter((route) => route.source === id("FIN-7")))).toBe(0);
+    expect(sampledCrossings(routes)).toBeLessThanOrEqual(4);
+    expectSmoothJoins(routes);
+
+    const reversed = routeDependencyEdges([...topology.positions].reverse(), [...topology.edges].reverse()).routes;
+    expect(new Map(reversed.map((route) => [`${route.source}:${route.target}`, route.d])))
+      .toEqual(new Map(routes.map((route) => [`${route.source}:${route.target}`, route.d])));
+  }, 30_000);
+
   it("uses one smooth cubic when the direct path is clear", () => {
     const nodes = [
       { id: "source", x: 0, y: 70 },
@@ -215,6 +304,31 @@ describe("layoutDependencyNodes", () => {
 });
 
 describe("layoutDependencyGraph", () => {
+  it("reduces published graph crossings while keeping dates, clearance, and smoothness", () => {
+    const layout = layoutDependencyGraph(topology.nodes, topology.edges);
+    // Includes FIN-19 → FIN-20 / FIN-68 → FIN-23 and the shared FIN-29
+    // approach, plus any other long horizontal runs that become coincident.
+    expectSeparateHorizontalRuns(layout.routes);
+    // The original generated view has 12 crossing pairs (eight involving FIN-7).
+    expect(sampledCrossings(layout.routes)).toBeLessThanOrEqual(2);
+    const hub = topology.nodes.find((node) => node.label === "FIN-7")!.id;
+    expect(sampledCrossings(layout.routes.filter((route) => route.source === hub))).toBe(0);
+    const ordered = [...layout.nodes].sort((a, b) => a.x - b.x);
+    const dates = new Map(topology.nodes.map((node) => [node.id, node.dateKey]));
+    for (let i = 1; i < ordered.length; i += 1) {
+      expect(dates.get(ordered[i].id)! >= dates.get(ordered[i - 1].id)!).toBe(true);
+      expect(ordered[i].x).toBeGreaterThan(ordered[i - 1].x);
+    }
+    for (const route of layout.routes) {
+      const source = ordered.find((node) => node.id === route.source)!;
+      const target = ordered.find((node) => node.id === route.target)!;
+      if (dates.get(source.id) === dates.get(target.id)) expect(source.x).toBeLessThan(target.x);
+      expect(routeClearance(route.segments, layout.nodes, route.source, route.target)).toBeGreaterThanOrEqual(8);
+    }
+    expect(Math.max(...layout.nodes.map((node) => node.y)) - Math.min(...layout.nodes.map((node) => node.y))).toBeLessThanOrEqual(9 * 76);
+    expectSmoothJoins(layout.routes);
+  }, 45_000);
+
   it("preserves date order while deterministically refining equal-date ties", () => {
     const input = [
       { id: "late", dateKey: "2027-02-01" },
@@ -302,7 +416,7 @@ describe("layoutDependencyGraph", () => {
     for (const route of layout.routes) {
       expect(routeClearance(route.segments, layout.nodes, route.source, route.target, RADIUS)).toBeGreaterThanOrEqual(6);
     }
-  });
+  }, 30_000);
 
   it("handles reverse and cyclic dependencies deterministically", () => {
     const nodes = [
