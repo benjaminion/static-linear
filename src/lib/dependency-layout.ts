@@ -1,1258 +1,530 @@
-export interface DependencyLayoutNode {
-  id: string;
-  x: number;
-  y: number;
-}
-
-export interface DependencyLayoutInputNode {
-  id: string;
-  /** ISO date used only to preserve chronological X groups; null sorts last. */
-  dateKey: string | null;
-}
-
-export interface DependencyLayoutEdge {
-  source: string;
-  target: string;
-}
-
-interface Point {
-  x: number;
-  y: number;
-}
-
-export interface RoutedDependencyEdge extends DependencyLayoutEdge {
-  d: string;
-  segments: Array<[Point, Point, Point, Point]>;
-}
-
-export interface DependencyLayout {
-  routes: RoutedDependencyEdge[];
-  minY: number;
-  maxY: number;
-}
-
+/**
+ * Calendar-constrained layered drawing. Long edges participate in placement as
+ * virtual vertices, so ordering reserves their corridors before curves are drawn.
+ * All routes use the same monotone cubic Hermite spline; there are no rail paths.
+ * Nothing in this module is needed in the browser.
+ */
+export interface DependencyLayoutNode { id: string; x: number; y: number }
+export interface DependencyLayoutInputNode { id: string; dateKey: string | null }
+export interface DependencyLayoutEdge { source: string; target: string }
+interface Point { x: number; y: number }
+type Cubic = [Point, Point, Point, Point];
+export interface RoutedDependencyEdge extends DependencyLayoutEdge { d: string; segments: Cubic[] }
+export interface DependencyLayout { routes: RoutedDependencyEdge[]; minY: number; maxY: number }
+export interface DependencyNodeLayout { nodes: DependencyLayoutNode[]; width: number }
 export interface DependencyGraphLayout extends DependencyLayout, DependencyNodeLayout {}
 
-export interface DependencyNodeLayout {
-  nodes: DependencyLayoutNode[];
-  width: number;
+const RADIUS = 28;
+const CLEARANCE = 10;
+const COLUMN = 150;
+const PAD = 70;
+const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
+const edgeKey = (e: DependencyLayoutEdge) => JSON.stringify([e.source, e.target]);
+const distance = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
+const mix = (a: Point, b: Point, t: number): Point => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+const cross = (a: Point, b: Point, c: Point) => (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+
+export function cubicPoint([a, b, c, d]: Cubic, t: number): Point {
+  const s = 1 - t;
+  return { x: s ** 3 * a.x + 3 * s * s * t * b.x + 3 * s * t * t * c.x + t ** 3 * d.x,
+    y: s ** 3 * a.y + 3 * s * s * t * b.y + 3 * s * t * t * c.y + t ** 3 * d.y };
 }
 
-const NODE_RADIUS = 28;
-const HORIZONTAL_STEP = 76;
-const LANE_GAP = 76;
-// Three distinct 8px tracks can fit between node discs with 8px clearance.
-const ROUTING_LANE_GAP = 96;
-const LAYOUT_SEEDS = 3;
-const IMPROVEMENT_PASSES = 2;
-const BARYCENTER_PASSES = 3;
-const CLEARANCE = 8;
-const SAMPLE_COUNT = 16;
-const CORRIDOR_STEP = 4;
-const MAX_LANES = 10;
-const EXTRA_LANES = 2;
-const routePairSampleCache = new WeakMap<Array<[Point, Point, Point, Point]>, Point[]>();
-const routePairCostCache = new WeakMap<Array<[Point, Point, Point, Point]>, WeakMap<Array<[Point, Point, Point, Point]>, number>>();
-
-function rimPoint(node: DependencyLayoutNode, toward: Point, radius: number, perpOffset = 0): Point {
-  let dx = toward.x - node.x;
-  let dy = toward.y - node.y;
-  const length = Math.hypot(dx, dy) || 1;
-  dx /= length;
-  dy /= length;
-  const px = -dy;
-  const py = dx;
-  let ox = dx * radius + px * perpOffset;
-  let oy = dy * radius + py * perpOffset;
-  const offsetLength = Math.hypot(ox, oy) || 1;
-  // Keep the contact on the circle (perp offsets otherwise push outside the rim).
-  return {
-    x: node.x + (ox / offsetLength) * (radius + 1),
-    y: node.y + (oy / offsetLength) * (radius + 1),
-  };
+function pointSegment(p: Point, a: Point, b: Point): number {
+  const length = (b.x - a.x) ** 2 + (b.y - a.y) ** 2;
+  const t = length ? Math.max(0, Math.min(1, ((p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)) / length)) : 0;
+  return distance(p, mix(a, b, t));
 }
 
-export function cubicPoint(points: [Point, Point, Point, Point], t: number): Point {
-  const [start, control1, control2, end] = points;
-  const inverse = 1 - t;
-  return {
-    x: inverse ** 3 * start.x + 3 * inverse ** 2 * t * control1.x + 3 * inverse * t ** 2 * control2.x + t ** 3 * end.x,
-    y: inverse ** 3 * start.y + 3 * inverse ** 2 * t * control1.y + 3 * inverse * t ** 2 * control2.y + t ** 3 * end.y,
-  };
-}
-
-function sampleSegment(segment: [Point, Point, Point, Point], count = SAMPLE_COUNT): Point[] {
-  return Array.from({ length: count + 1 }, (_, index) => cubicPoint(segment, index / count));
-}
-
-function sampleSegments(segments: Array<[Point, Point, Point, Point]>, count = SAMPLE_COUNT): Point[] {
-  if (!segments.length) return [];
+/** Adaptive subdivision bounds the error even on long, sharply bending curves. */
+function flatten(segments: Cubic[], tolerance = 0.3): Point[] {
   const points: Point[] = [];
-  segments.forEach((segment, segmentIndex) => {
-    const samples = sampleSegment(segment, count);
-    if (segmentIndex === 0) points.push(...samples);
-    else points.push(...samples.slice(1));
-  });
+  function visit(s: Cubic, depth: number) {
+    const [a, b, c, d] = s;
+    if (depth >= 14 || Math.max(pointSegment(b, a, d), pointSegment(c, a, d)) <= tolerance) { points.push(d); return; }
+    const ab = mix(a, b, .5), bc = mix(b, c, .5), cd = mix(c, d, .5);
+    const abc = mix(ab, bc, .5), bcd = mix(bc, cd, .5), middle = mix(abc, bcd, .5);
+    visit([a, ab, abc, middle], depth + 1);
+    visit([middle, bcd, cd, d], depth + 1);
+  }
+  if (segments.length) points.push(segments[0][0]);
+  segments.forEach((s) => visit(s, 0));
   return points;
 }
 
-function adaptiveSampleSegments(segments: Array<[Point, Point, Point, Point]>, minimum = SAMPLE_COUNT): Point[] {
-  if (!segments.length) return [];
-  const points: Point[] = [];
-  segments.forEach((segment, segmentIndex) => {
-    const controlLength = segment.slice(1).reduce(
-      (sum, point, index) => sum + Math.hypot(point.x - segment[index].x, point.y - segment[index].y),
-      0,
-    );
-    const count = Math.max(minimum, Math.min(64, Math.ceil(controlLength / 12)));
-    const samples = sampleSegment(segment, count);
-    points.push(...(segmentIndex === 0 ? samples : samples.slice(1)));
-  });
-  return points;
-}
-
-function pointToSegmentDistance(point: Point, start: Point, end: Point): number {
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  const lengthSquared = dx * dx + dy * dy;
-  if (!lengthSquared) return Math.hypot(point.x - start.x, point.y - start.y);
-  const t = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared));
-  return Math.hypot(point.x - start.x - t * dx, point.y - start.y - t * dy);
-}
-
-function properIntersection(a: Point, b: Point, c: Point, d: Point): boolean {
-  const orient = (p: Point, q: Point, r: Point) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
-  const abC = orient(a, b, c);
-  const abD = orient(a, b, d);
-  const cdA = orient(c, d, a);
-  const cdB = orient(c, d, b);
-  const epsilon = 1e-6;
-  return ((abC > epsilon && abD < -epsilon) || (abC < -epsilon && abD > epsilon))
-    && ((cdA > epsilon && cdB < -epsilon) || (cdA < -epsilon && cdB > epsilon));
-}
-
-function routePairSamples(segments: Array<[Point, Point, Point, Point]>): Point[] {
-  const cached = routePairSampleCache.get(segments);
-  if (cached) return cached;
-  const samples: Point[] = segments.length ? [segments[0][0]] : [];
-  const midpoint = (a: Point, b: Point): Point => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
-  const flatten = ([a, b, c, d]: [Point, Point, Point, Point], depth: number) => {
-    if (depth === 10 || Math.max(pointToSegmentDistance(b, a, d), pointToSegmentDistance(c, a, d)) < .15) {
-      samples.push(d);
-      return;
-    }
-    const ab = midpoint(a, b), bc = midpoint(b, c), cd = midpoint(c, d);
-    const abc = midpoint(ab, bc), bcd = midpoint(bc, cd);
-    const mid = midpoint(abc, bcd);
-    flatten([a, ab, abc, mid], depth + 1);
-    flatten([mid, bcd, cd, d], depth + 1);
-  };
-  for (const segment of segments) flatten(segment, 0);
-  routePairSampleCache.set(segments, samples);
-  return samples;
-}
-
-/** Length of b inside a narrow strip around a, independent of tessellation. */
-function nearbyRunLength(a: Point, b: Point, c: Point, d: Point): number {
-  const length = Math.hypot(b.x - a.x, b.y - a.y);
-  if (!length) return 0;
-  const ux = (b.x - a.x) / length, uy = (b.y - a.y) / length;
-  const x = (c.x - a.x) * ux + (c.y - a.y) * uy;
-  const y = -(c.x - a.x) * uy + (c.y - a.y) * ux;
-  const dx = (d.x - c.x) * ux + (d.y - c.y) * uy;
-  const dy = -(d.x - c.x) * uy + (d.y - c.y) * ux;
-  let low = 0, high = 1;
-  for (const [start, delta, min, max] of [[x, dx, 0, length], [y, dy, -7, 7]]) {
-    if (Math.abs(delta) < 1e-8) {
-      if (start < min || start > max) return 0;
-    } else {
-      const first = (min - start) / delta, last = (max - start) / delta;
-      low = Math.max(low, Math.min(first, last));
-      high = Math.min(high, Math.max(first, last));
-      if (low >= high) return 0;
-    }
+export function routeClearance(segments: Cubic[], nodes: DependencyLayoutNode[], source: string, target: string, radius = RADIUS): number {
+  const path = flatten(segments, .15);
+  let clearance = Infinity;
+  for (const node of nodes) {
+    if (node.id === source || node.id === target) continue;
+    for (let i = 1; i < path.length; i++) clearance = Math.min(clearance, pointSegment(node, path[i - 1], path[i]) - radius);
   }
-  return Math.abs(dx) * (high - low) * (1 - Math.abs(y + dy * (low + high) / 2) / 7);
+  return clearance;
 }
 
-/** Shared endpoints do not excuse crossings elsewhere along a pair of routes. */
-function routePairCost(
-  first: Array<[Point, Point, Point, Point]>,
-  second: Array<[Point, Point, Point, Point]>,
-): number {
-  const cached = routePairCostCache.get(first)?.get(second) ?? routePairCostCache.get(second)?.get(first);
-  if (cached !== undefined) return cached;
-  const a = routePairSamples(first);
-  const b = routePairSamples(second);
-  let crossings = 0;
-  let closeLength = 0;
-  for (let i = 1; i < a.length; i += 1) {
-    for (let j = 1; j < b.length; j += 1) {
-      if (
-        Math.max(a[i - 1].x, a[i].x) + 7 < Math.min(b[j - 1].x, b[j].x)
-        || Math.max(b[j - 1].x, b[j].x) + 7 < Math.min(a[i - 1].x, a[i].x)
-        || Math.max(a[i - 1].y, a[i].y) + 7 < Math.min(b[j - 1].y, b[j].y)
-        || Math.max(b[j - 1].y, b[j].y) + 7 < Math.min(a[i - 1].y, a[i].y)
-      ) continue;
-      if (properIntersection(a[i - 1], a[i], b[j - 1], b[j])) crossings += 1;
-      closeLength += (nearbyRunLength(a[i - 1], a[i], b[j - 1], b[j])
-        + nearbyRunLength(b[j - 1], b[j], a[i - 1], a[i])) / 2;
-    }
-  }
-  const cost = crossings * 4_000 + closeLength * 2;
-  if (!routePairCostCache.has(first)) routePairCostCache.set(first, new WeakMap());
-  routePairCostCache.get(first)!.set(second, cost);
-  return cost;
+function intersects(a: Point, b: Point, c: Point, d: Point): boolean {
+  if (Math.max(a.x, b.x) < Math.min(c.x, d.x) || Math.max(c.x, d.x) < Math.min(a.x, b.x)
+    || Math.max(a.y, b.y) < Math.min(c.y, d.y) || Math.max(c.y, d.y) < Math.min(a.y, b.y)) return false;
+  return cross(a, b, c) * cross(a, b, d) < -1e-8 && cross(c, d, a) * cross(c, d, b) < -1e-8;
 }
 
-/** Minimum distance from path interior samples to any non-endpoint node disc edge (negative = penetration). */
-export function routeClearance(
-  segments: Array<[Point, Point, Point, Point]>,
-  nodes: DependencyLayoutNode[],
-  sourceId: string,
-  targetId: string,
-  radius = NODE_RADIUS,
-): number {
-  const samples = adaptiveSampleSegments(segments);
-  let best = Infinity;
-  for (const point of samples.slice(1, -1)) {
-    for (const node of nodes) {
-      if (node.id === sourceId || node.id === targetId) continue;
-      best = Math.min(best, Math.hypot(point.x - node.x, point.y - node.y) - radius);
-    }
-  }
-  return best;
-}
-
-function nodesInSpan(
-  source: DependencyLayoutNode,
-  target: DependencyLayoutNode,
-  nodes: DependencyLayoutNode[],
-): DependencyLayoutNode[] {
-  const minX = Math.min(source.x, target.x);
-  const maxX = Math.max(source.x, target.x);
-  return nodes.filter((node) => {
-    if (node.id === source.id || node.id === target.id) return false;
-    return node.x + NODE_RADIUS > minX && node.x - NODE_RADIUS < maxX;
-  });
-}
-
-function pathString(segments: Array<[Point, Point, Point, Point]>): string {
-  if (!segments.length) return "";
-  const [first, ...rest] = segments;
-  let d = `M ${first[0].x} ${first[0].y} C ${first[1].x} ${first[1].y}, ${first[2].x} ${first[2].y}, ${first[3].x} ${first[3].y}`;
-  for (const segment of rest) {
-    d += ` C ${segment[1].x} ${segment[1].y}, ${segment[2].x} ${segment[2].y}, ${segment[3].x} ${segment[3].y}`;
-  }
-  return d;
-}
-
-/** Fan-out offsets by polar angle so multiple edges leave/enter without stacking. */
-function angularOffsets(
-  edges: DependencyLayoutEdge[],
-  nodes: Map<string, DependencyLayoutNode>,
-  radius: number,
-): Map<string, number> {
-  const groups = new Map<string, Array<{ edgeIndex: number; angle: number; key: string }>>();
-  edges.forEach((edge, edgeIndex) => {
-    const source = nodes.get(edge.source);
-    const target = nodes.get(edge.target);
-    if (!source || !target) return;
-    const outAngle = Math.atan2(target.y - source.y, target.x - source.x);
-    const inAngle = Math.atan2(source.y - target.y, source.x - target.x);
-    const sourceKey = `out:${edge.source}`;
-    const targetKey = `in:${edge.target}`;
-    const edgeKey = `${edge.source}\u0000${edge.target}`;
-    groups.set(sourceKey, [...(groups.get(sourceKey) ?? []), { edgeIndex, angle: outAngle, key: edgeKey }]);
-    groups.set(targetKey, [...(groups.get(targetKey) ?? []), { edgeIndex, angle: inAngle, key: edgeKey }]);
-  });
-
-  const offsets = new Map<string, number>();
-  for (const [key, entries] of groups) {
-    entries.sort((a, b) => a.angle - b.angle || a.key.localeCompare(b.key) || a.edgeIndex - b.edgeIndex);
-    const step = entries.length > 1 ? Math.min(10, radius * 1.15 / (entries.length - 1)) : 0;
-    entries.forEach((entry, index) => {
-      offsets.set(`${key}:${entry.edgeIndex}`, (index - (entries.length - 1) / 2) * step);
-    });
-  }
-  return offsets;
-}
-
-function directCurve(
-  source: DependencyLayoutNode,
-  target: DependencyLayoutNode,
-  radius: number,
-  sourceOffset: number,
-  targetOffset: number,
-): [Point, Point, Point, Point] {
-  const start = rimPoint(source, target, radius, sourceOffset);
-  const end = rimPoint(target, source, radius, targetOffset);
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  const distance = Math.max(1, Math.hypot(dx, dy));
-  // Radial tangents keep even fanned attachments continuous with the node rim.
-  const handle = Math.max(12, Math.min(160, distance * .38));
-  return [
-    start,
-    { x: start.x + (start.x - source.x) / (radius + 1) * handle, y: start.y + (start.y - source.y) / (radius + 1) * handle },
-    { x: end.x + (end.x - target.x) / (radius + 1) * handle, y: end.y + (end.y - target.y) / (radius + 1) * handle },
-    end,
-  ];
-}
-
-/** A gentle bow relative to the chord, including sloping fan-out corridors. */
-function bowedCurve(
-  source: DependencyLayoutNode,
-  target: DependencyLayoutNode,
-  bend: number,
-  radius: number,
-): [Point, Point, Point, Point] {
-  const dx = target.x - source.x;
-  const dy = target.y - source.y;
-  const first = { x: source.x + dx / 3, y: source.y + dy / 3 + bend };
-  const second = { x: target.x - dx / 3, y: target.y - dy / 3 + bend };
-  return [rimPoint(source, first, radius), first, second, rimPoint(target, second, radius)];
-}
-
-function corridorClear(
-  corridorY: number,
-  source: DependencyLayoutNode,
-  target: DependencyLayoutNode,
-  obstacles: DependencyLayoutNode[],
-  radius: number,
-  clearance: number,
-): boolean {
-  const minX = Math.min(source.x, target.x);
-  const maxX = Math.max(source.x, target.x);
-  for (const node of obstacles) {
-    if (node.x < minX - radius || node.x > maxX + radius) continue;
-    if (Math.abs(node.y - corridorY) < radius + clearance) return false;
-  }
-  return true;
-}
-
-/** Prefer gaps near the chord over wrapping around the whole obstacle bounding box. */
-function findCorridorYs(
-  source: DependencyLayoutNode,
-  target: DependencyLayoutNode,
-  obstacles: DependencyLayoutNode[],
-  radius: number,
-  clearance: number,
-): number[] {
-  const pad = radius + clearance + 4;
-  const ys = [source.y, target.y, (source.y + target.y) / 2];
-  for (const node of obstacles) {
-    ys.push(node.y + pad, node.y - pad, node.y + pad + LANE_GAP / 2, node.y - pad - LANE_GAP / 2);
-  }
-  if (obstacles.length) {
-    const minObs = Math.min(...obstacles.map((node) => node.y));
-    const maxObs = Math.max(...obstacles.map((node) => node.y));
-    for (let y = minObs - pad * 2; y <= maxObs + pad * 2; y += CORRIDOR_STEP) ys.push(y);
-  }
-
-  const chord = (source.y + target.y) / 2;
-  const unique = [...new Set(ys.map((y) => Math.round(y * 2) / 2))];
-  const scored = unique
-    .filter((y) => corridorClear(y, source, target, obstacles, radius, clearance))
-    .map((y) => ({
-      y,
-      cost:
-        Math.abs(y - chord) * 1.2
-        + (Math.abs(y - source.y) + Math.abs(y - target.y)) * .25,
-    }))
-    .sort((a, b) => a.cost - b.cost || a.y - b.y);
-
-  return scored.map((entry) => entry.y);
-}
-
-function corridorCurve(
-  source: DependencyLayoutNode,
-  target: DependencyLayoutNode,
-  corridorY: number,
-  radius: number,
-  sourceOffset: number,
-  targetOffset: number,
-): [Point, Point, Point, Point] {
-  const direction = target.x >= source.x ? 1 : -1;
-  const span = Math.abs(target.x - source.x);
-  const inset = Math.max(radius + 8, Math.min(span * .22, span / 2 - 4));
-  const aimStart: Point = { x: source.x + direction * inset, y: corridorY };
-  const aimEnd: Point = { x: target.x - direction * inset, y: corridorY };
-  const start = rimPoint(source, aimStart, radius, sourceOffset);
-  const end = rimPoint(target, aimEnd, radius, targetOffset);
-  const distance = Math.max(1, Math.hypot(end.x - start.x, end.y - start.y));
-  // Longer handles at corridor height reach the rail sooner and reduce mid-span sag into nodes.
-  const handle = Math.max(28, Math.min(220, distance * .48));
-
-  return [
-    start,
-    { x: start.x + direction * handle, y: corridorY },
-    { x: end.x - direction * handle, y: corridorY },
-    end,
-  ];
-}
-
-function outerRailY(
-  obstacles: DependencyLayoutNode[],
-  source: DependencyLayoutNode,
-  target: DependencyLayoutNode,
-  radius: number,
-  side: 1 | -1,
-  stagger: number,
-): number {
-  if (!obstacles.length) {
-    return (source.y + target.y) / 2 + side * (radius + CLEARANCE + stagger);
-  }
-  if (side === 1) return Math.max(...obstacles.map((node) => node.y)) + radius + CLEARANCE + stagger;
-  return Math.min(...obstacles.map((node) => node.y)) - radius - CLEARANCE - stagger;
-}
-
-/**
- * Multi-segment rail path with G1 joins: climb/descend end with horizontal tangents
- * matching the rail, so joints stay smooth instead of forming corners.
- */
-function railDetour(
-  source: DependencyLayoutNode,
-  target: DependencyLayoutNode,
-  railY: number,
-  radius: number,
-  sourceOffset: number,
-  targetOffset: number,
-  rampScale = 1,
-): Array<[Point, Point, Point, Point]> {
-  const direction = target.x >= source.x ? 1 : -1;
-  const aimInset = Math.min(Math.abs(target.x - source.x) * .3, (radius + 10) * rampScale);
-  const aimStart: Point = { x: source.x + direction * aimInset, y: railY };
-  const aimEnd: Point = { x: target.x - direction * aimInset, y: railY };
-  const start = rimPoint(source, aimStart, radius, sourceOffset);
-  const end = rimPoint(target, aimEnd, radius, targetOffset);
-  const span = Math.abs(end.x - start.x);
-  const rise = Math.abs(railY - start.y);
-  const fall = Math.abs(railY - end.y);
-  // Reach the rail a short distance from each endpoint, then travel horizontally.
-  const joinInset = Math.min(span * .42, Math.max(28, Math.min(90, Math.max(rise, fall) * .55 + 16, span * .12)) * rampScale);
-  const leftRail: Point = { x: start.x + direction * joinInset, y: railY };
-  const rightRail: Point = { x: end.x - direction * joinInset, y: railY };
-  const travel = Math.abs(rightRail.x - leftRail.x);
-  const horiz = Math.min(joinInset * .65, 70 * rampScale);
-
-  if (travel < 16) {
-    const apex: Point = { x: (start.x + end.x) / 2, y: railY };
-    return [
-      [
-        start,
-        { x: start.x + direction * horiz * .4, y: start.y + (railY - start.y) * .2 },
-        { x: apex.x - direction * horiz, y: railY },
-        apex,
-      ],
-      [
-        apex,
-        { x: apex.x + direction * horiz, y: railY },
-        { x: end.x - direction * horiz * .4, y: end.y + (railY - end.y) * .2 },
-        end,
-      ],
-    ];
-  }
-
-  // c2 of climb / c1 of travel share the rail y so the join tangent is horizontal.
-  const climb: [Point, Point, Point, Point] = [
-    start,
-    {
-      x: start.x + (leftRail.x - start.x) * .3,
-      y: start.y + (railY - start.y) * .15,
-    },
-    { x: leftRail.x - direction * horiz, y: railY },
-    leftRail,
-  ];
-  const across: [Point, Point, Point, Point] = [
-    leftRail,
-    { x: leftRail.x + direction * travel * .33, y: railY },
-    { x: leftRail.x + direction * travel * .66, y: railY },
-    rightRail,
-  ];
-  const descend: [Point, Point, Point, Point] = [
-    rightRail,
-    { x: rightRail.x + direction * horiz, y: railY },
-    {
-      x: end.x - (end.x - rightRail.x) * .3,
-      y: end.y + (railY - end.y) * .15,
-    },
-    end,
-  ];
-  return [climb, across, descend];
-}
-
-/** Cosine of the tangent kink at each joint (1 = smooth, lower = corner). */
-function jointSmoothness(segments: Array<[Point, Point, Point, Point]>): number {
-  if (segments.length < 2) return 1;
-  let worst = 1;
-  for (let index = 1; index < segments.length; index += 1) {
-    const previous = segments[index - 1];
-    const next = segments[index];
-    const out = { x: previous[3].x - previous[2].x, y: previous[3].y - previous[2].y };
-    const into = { x: next[1].x - next[0].x, y: next[1].y - next[0].y };
-    const outLen = Math.hypot(out.x, out.y) || 1;
-    const intoLen = Math.hypot(into.x, into.y) || 1;
-    const cos = (out.x * into.x + out.y * into.y) / (outLen * intoLen);
-    worst = Math.min(worst, cos);
-  }
-  return worst;
-}
-
-function scoreRoute(
-  segments: Array<[Point, Point, Point, Point]>,
-  nodes: DependencyLayoutNode[],
-  source: DependencyLayoutNode,
-  target: DependencyLayoutNode,
-  radius: number,
-  clearance = routeClearance(segments, nodes, source.id, target.id, radius),
-): number {
-  const samples = sampleSegments(segments, 8);
-  let length = 0;
-  for (let index = 1; index < samples.length; index += 1) {
-    length += Math.hypot(samples[index].x - samples[index - 1].x, samples[index].y - samples[index - 1].y);
-  }
-  const chord = Math.hypot(target.x - source.x, target.y - source.y);
-  const mid = samples[Math.floor(samples.length / 2)];
-  const midDrift = mid ? Math.abs(mid.y - (source.y + target.y) / 2) : 0;
-  const kink = 1 - Math.min(1, jointSmoothness(segments));
-  // Prefer short, near-chord, smooth paths; treat insufficient clearance as disqualifying.
-  return (clearance < CLEARANCE ? 50_000 - clearance * 200 : 0)
-    + length * .35
-    + midDrift * .8
-    + Math.max(0, length - chord) * .5
-    + Math.max(0, segments.length - 1) * 10
-    + kink * 120;
-}
-
-function buildEdgeCandidates(
-  source: DependencyLayoutNode,
-  target: DependencyLayoutNode,
-  layoutNodes: DependencyLayoutNode[],
-  radius: number,
-  sourceOffset: number,
-  targetOffset: number,
-  edgeKey: string,
-): Array<Array<[Point, Point, Point, Point]>> {
-  const candidates: Array<[Point, Point, Point, Point][]> = [];
-
-  const direct = directCurve(source, target, radius, sourceOffset, targetOffset);
-  candidates.push([direct]);
-  if (sourceOffset || targetOffset) candidates.push([directCurve(source, target, radius, 0, 0)]);
-  const directCount = candidates.length;
-  for (const bend of [16, 32, 56, 88, 128, 180, 248, 336]) {
-    candidates.push([bowedCurve(source, target, bend, radius)]);
-    candidates.push([bowedCurve(source, target, -bend, radius)]);
-  }
-
-  const obstacles = nodesInSpan(source, target, layoutNodes);
-  const corridors = findCorridorYs(source, target, obstacles, radius, CLEARANCE).slice(0, 12);
-  for (const corridorY of corridors) {
-    candidates.push([corridorCurve(source, target, corridorY, radius, 0, 0)]);
-  }
-
-  if (obstacles.length) {
-    const stagger = (hash(edgeKey) % 3) * 10;
-    for (const side of [1, -1] as const) {
-      const railY = outerRailY(obstacles, source, target, radius, side, stagger);
-      candidates.push([corridorCurve(source, target, railY, radius, 0, 0)]);
-      candidates.push(railDetour(source, target, railY, radius, 0, 0));
-    }
-
-    // Multi-segment rails: try clear corridors plus a denser y-scan. Horizontal
-    // corridorClear is stricter than the actual curved path, so we also probe
-    // near-chord y values and keep whatever railDetour actually clears.
-    const railYs = new Set<number>(corridors.slice(0, 8));
-    const chord = (source.y + target.y) / 2;
-    const scanMin = Math.min(source.y, target.y, ...obstacles.map((node) => node.y)) - radius - CLEARANCE * 2;
-    const scanMax = Math.max(source.y, target.y, ...obstacles.map((node) => node.y)) + radius + CLEARANCE * 2;
-    for (let y = scanMin; y <= scanMax; y += CORRIDOR_STEP * 2) railYs.add(Math.round(y));
-    railYs.add(Math.round(chord));
-    for (const node of obstacles) {
-      railYs.add(Math.round(node.y + radius + CLEARANCE + 2));
-      railYs.add(Math.round(node.y - radius - CLEARANCE - 2));
-    }
-
-    for (const railY of railYs) {
-      for (const rampScale of [1, 2, 4]) {
-        candidates.push(railDetour(source, target, railY, radius, 0, 0, rampScale));
-      }
-    }
-  }
-
-  const scored = candidates
-    .map((segments, index) => {
-      const clearance = routeClearance(segments, layoutNodes, source.id, target.id, radius);
-      return { segments, index, clearance, score: scoreRoute(segments, layoutNodes, source, target, radius, clearance) };
-    })
-    .sort((a, b) => a.score - b.score || a.index - b.index);
-
-  // Preserve distinct corridors, not just tiny variations of the same local
-  // optimum. Global selection needs alternatives on both sides of obstacles.
-  const clear = scored.filter(({ clearance }) => clearance >= CLEARANCE);
-  const eligible = clear.length ? clear : scored.slice(0, 1);
-  // Small differences at a shared rim matter even when two chords are otherwise
-  // nearly identical. Keep both fanned and radial direct choices when clear.
-  const selected = eligible.filter(({ index }) => index < directCount);
-  const signature = (segments: Array<[Point, Point, Point, Point]>) => {
-    const points = routePairSamples(segments);
-    return [0, .2, .4, .6, .8, 1].map((t) => {
-      if (t === 0) return points[0];
-      if (t === 1) return points[points.length - 1];
-      const x = source.x + (target.x - source.x) * t;
-      for (let i = 1; i < points.length; i += 1) {
-        const a = points[i - 1], b = points[i];
-        if (x < Math.min(a.x, b.x) || x > Math.max(a.x, b.x) || a.x === b.x) continue;
-        return { x, y: a.y + (b.y - a.y) * (x - a.x) / (b.x - a.x) };
-      }
-      return points[Math.round(t * (points.length - 1))];
-    });
-  };
-  const signatures = selected.map(({ segments }) => signature(segments));
-  for (const candidate of eligible) {
-    const points = signature(candidate.segments);
-    if (signatures.some((previous) => points.every((point, i) => Math.hypot(point.x - previous[i].x, point.y - previous[i].y) < 12))) continue;
-    selected.push(candidate);
-    signatures.push(points);
-    if (selected.length === 16) break;
-  }
-  return selected.map(({ segments }) => segments);
-}
-
-export function routeDependencyEdges(
-  layoutNodes: DependencyLayoutNode[],
-  layoutEdges: DependencyLayoutEdge[],
-  radius = NODE_RADIUS,
-): DependencyLayout {
-  if (!layoutNodes.length) return { routes: [], minY: 0, maxY: 220 };
-  const nodes = new Map(layoutNodes.map((node) => [node.id, node]));
-  const edges = layoutEdges.filter((edge) => edge.source !== edge.target && nodes.has(edge.source) && nodes.has(edge.target));
-  const offsets = angularOffsets(edges, nodes, radius);
-
-  // Longer spans first so the routes which are hardest to place reserve corridors first.
-  const order = edges
-    .map((edge, edgeIndex) => {
-      const source = nodes.get(edge.source)!;
-      const target = nodes.get(edge.target)!;
-      return { edge, edgeIndex, span: Math.abs(target.x - source.x), key: `${edge.source}\u0000${edge.target}` };
-    })
-    .sort((a, b) => b.span - a.span || a.key.localeCompare(b.key));
-
-  const routed = new Map<number, RoutedDependencyEdge>();
-  const candidatesByIndex = new Map<number, Array<Array<[Point, Point, Point, Point]>>>();
-  const candidateScores = new Map<Array<[Point, Point, Point, Point]>, number>();
-  for (const { edge, edgeIndex, key } of order) {
-    const source = nodes.get(edge.source)!;
-    const target = nodes.get(edge.target)!;
-    const candidates = buildEdgeCandidates(
-      source,
-      target,
-      layoutNodes,
-      radius,
-      offsets.get(`out:${edge.source}:${edgeIndex}`) ?? 0,
-      offsets.get(`in:${edge.target}:${edgeIndex}`) ?? 0,
-      key,
-    );
-    candidatesByIndex.set(edgeIndex, candidates);
-    for (const candidate of candidates) candidateScores.set(candidate, scoreRoute(candidate, layoutNodes, source, target, radius));
-    let segments = candidates[0];
-    let bestScore = Infinity;
-    for (const candidate of candidates) {
-      let score = candidateScores.get(candidate)!;
-      for (const previous of routed.values()) {
-        score += routePairCost(candidate, previous.segments);
-      }
-      if (score < bestScore) {
-        bestScore = score;
-        segments = candidate;
-      }
-    }
-    routed.set(edgeIndex, {
-      ...edge,
-      segments,
-      d: pathString(segments),
-    });
-  }
-
-  // Deterministic coordinate descent lets earlier reservations react to later paths.
-  for (let pass = 0; pass < 3; pass += 1) {
-    let changed = false;
-    for (const { edge, edgeIndex } of order) {
-      let best = routed.get(edgeIndex)!.segments;
-      let bestScore = Infinity;
-      for (const candidate of candidatesByIndex.get(edgeIndex)!) {
-        let score = candidateScores.get(candidate)!;
-        for (const [otherIndex, other] of routed) {
-          if (otherIndex === edgeIndex) continue;
-          score += routePairCost(candidate, other.segments);
-        }
-        if (score < bestScore) {
-          bestScore = score;
-          best = candidate;
-        }
-      }
-      if (best !== routed.get(edgeIndex)!.segments) changed = true;
-      routed.set(edgeIndex, { ...edge, segments: best, d: pathString(best) });
-    }
-    // Two crossing routes may need to change corridors together: either change
-    // alone can be worse. Search a bounded set of pairs to escape that deadlock.
-    let refinedPairs = 0;
-    for (let i = 0; i < order.length && refinedPairs < 6; i += 1) {
-      for (let j = i + 1; j < order.length && refinedPairs < 6; j += 1) {
-        const firstIndex = order[i].edgeIndex, secondIndex = order[j].edgeIndex;
-        const first = routed.get(firstIndex)!, second = routed.get(secondIndex)!;
-        if (!routePairCrosses(first.segments, second.segments)) continue;
-        refinedPairs += 1;
-        const choices = (index: number) => candidatesByIndex.get(index)!.map((segments) => {
-          let score = candidateScores.get(segments)!;
-          for (const [otherIndex, other] of routed) {
-            if (otherIndex !== firstIndex && otherIndex !== secondIndex) score += routePairCost(segments, other.segments);
-          }
-          return { segments, score };
-        });
-        const firstChoices = choices(firstIndex), secondChoices = choices(secondIndex);
-        let bestFirst = first.segments, bestSecond = second.segments;
-        let bestScore = firstChoices.find((c) => c.segments === bestFirst)!.score
-          + secondChoices.find((c) => c.segments === bestSecond)!.score
-          + routePairCost(bestFirst, bestSecond);
-        for (const a of firstChoices) {
-          for (const b of secondChoices) {
-            const score = a.score + b.score + routePairCost(a.segments, b.segments);
-            if (score < bestScore - 1e-6) {
-              bestScore = score;
-              bestFirst = a.segments;
-              bestSecond = b.segments;
-            }
-          }
-        }
-        if (bestFirst !== first.segments || bestSecond !== second.segments) {
-          changed = true;
-          routed.set(firstIndex, { ...first, segments: bestFirst, d: pathString(bestFirst) });
-          routed.set(secondIndex, { ...second, segments: bestSecond, d: pathString(bestSecond) });
-        }
-      }
-    }
-    if (!changed) break;
-  }
-
-  const routes = edges.map((_, edgeIndex) => routed.get(edgeIndex)!);
-  return { routes, ...routeBounds(layoutNodes, routes, radius) };
-}
-
-function routeBounds(layoutNodes: DependencyLayoutNode[], routes: RoutedDependencyEdge[], radius: number) {
-  const sampleYs = routes.flatMap((route) => sampleSegments(route.segments, 6).map((point) => point.y));
-  const minNodeY = Math.min(...layoutNodes.map((node) => node.y));
-  const maxNodeY = Math.max(...layoutNodes.map((node) => node.y));
-  const minCurveY = sampleYs.length ? Math.min(...sampleYs) : minNodeY;
-  const maxCurveY = sampleYs.length ? Math.max(...sampleYs) : maxNodeY;
-  return {
-    minY: Math.min(0, minNodeY - radius - 16, minCurveY - 12),
-    maxY: Math.max(220, maxNodeY + radius + 16, maxCurveY + 12),
-  };
-}
-
-/** Open narrow lane gaps, then separate parallel runs without adding crossings. */
-function separateRouteCorridors(layout: DependencyGraphLayout, radius: number): DependencyGraphLayout {
-  if (layout.routes.length < 2) return layout;
-  const scaleY = (y: number) => 70 + (y - 70) * ROUTING_LANE_GAP / LANE_GAP;
-  const nodes = layout.nodes.map((node) => ({ ...node, y: scaleY(node.y) }));
-  const byId = new Map(nodes.map((node) => [node.id, node]));
-  const transform = (route: RoutedDependencyEdge, mapY: (y: number) => number): RoutedDependencyEdge => {
-    const segments = route.segments.map((segment) => segment.map((p) => ({ x: p.x, y: mapY(p.y) })) as [Point, Point, Point, Point]);
-    const first = segments[0], last = segments[segments.length - 1];
-    first[0] = rimPoint(byId.get(route.source)!, first[0], radius);
-    last[3] = rimPoint(byId.get(route.target)!, last[3], radius);
-    return { ...route, segments, d: pathString(segments) };
-  };
-  const routes = layout.routes.map((route) => transform(route, scaleY));
-  const order = routes.map((_, i) => i).sort((a, b) =>
-    Math.abs(byId.get(routes[b].target)!.x - byId.get(routes[b].source)!.x)
-      - Math.abs(byId.get(routes[a].target)!.x - byId.get(routes[a].source)!.x)
-      || `${routes[a].source}:${routes[a].target}`.localeCompare(`${routes[b].source}:${routes[b].target}`));
-  for (let pass = 0; pass < 4; pass += 1) {
-    let changed = false;
-    for (const index of pass % 2 ? [...order].reverse() : order) {
-      const route = routes[index];
-      const source = byId.get(route.source)!, target = byId.get(route.target)!;
-      const crossings = routes.map((other, i) => i !== index && routePairCrosses(route.segments, other.segments));
-      const cost = (candidate: RoutedDependencyEdge) => scoreRoute(candidate.segments, nodes, source, target, radius)
-        + routes.reduce((sum, other, i) => sum + (i === index ? 0 : routePairCost(candidate.segments, other.segments)), 0);
-      let best = route, bestCost = cost(route);
-      const candidates: RoutedDependencyEdge[] = [];
-      for (const shift of [0, -8, 8, -16, 16, -24, 24, -32, 32]) {
-        candidates.push(transform(route, (y) => y + shift));
-        const rail = route.segments.length === 3 ? route.segments[1] : null;
-        if (rail && rail.every((p) => p.y === rail[0].y)) {
-          for (const ramp of [1, 2, 4]) {
-            const segments = railDetour(source, target, rail[0].y + shift, radius, 0, 0, ramp);
-            candidates.push({ ...route, segments, d: pathString(segments) });
-          }
-        }
-      }
-      for (const candidate of candidates) {
-        if (routeClearance(candidate.segments, nodes, source.id, target.id, radius) < CLEARANCE) continue;
-        if (routes.some((other, i) => i !== index && !crossings[i] && routePairCrosses(candidate.segments, other.segments))) continue;
-        const candidateCost = cost(candidate);
-        if (candidateCost < bestCost - 1e-6) { best = candidate; bestCost = candidateCost; }
-      }
-      if (best !== route) { routes[index] = best; changed = true; }
-    }
-    if (!changed) break;
-  }
-  return { nodes, routes, width: layout.width, ...routeBounds(nodes, routes, radius) };
-}
-
-function neighborsOf(nodeIds: string[], edges: DependencyLayoutEdge[]): Map<string, string[]> {
-  const neighbors = new Map(nodeIds.map((id) => [id, [] as string[]]));
-  for (const edge of edges) {
-    if (!neighbors.has(edge.source) || !neighbors.has(edge.target) || edge.source === edge.target) continue;
-    neighbors.get(edge.source)!.push(edge.target);
-    neighbors.get(edge.target)!.push(edge.source);
-  }
-  return neighbors;
-}
-
-/**
- * Placement score: keep related nodes on similar lanes, open chords through gaps,
- * and avoid stacking unrelated nodes on the same lane when they sit close in X.
- */
-function layoutScore(nodes: DependencyLayoutNode[], edges: DependencyLayoutEdge[]): number {
-  const byId = new Map(nodes.map((node) => [node.id, node]));
-  const valid = edges.filter((edge) => edge.source !== edge.target && byId.has(edge.source) && byId.has(edge.target));
-  let score = 0;
-  const ys = nodes.map((node) => node.y);
-  score += (Math.max(...ys) - Math.min(...ys)) * .04;
-
-  for (const edge of valid) {
-    const source = byId.get(edge.source)!;
-    const target = byId.get(edge.target)!;
-    const dy = Math.abs(source.y - target.y);
-    // Strong pull: chains should progress level rather than zig-zag.
-    score += dy * .55;
-    const spanHops = Math.abs(target.x - source.x) / HORIZONTAL_STEP;
-    if (spanHops <= 1.5) score += dy * .9;
-    else if (spanHops <= 3) score += dy * .35;
-
-    const obstacles = nodesInSpan(source, target, nodes);
-    for (const node of obstacles) {
-      const t = Math.abs(target.x - source.x) < 1
-        ? 0.5
-        : (node.x - source.x) / (target.x - source.x);
-      const chordY = source.y + (target.y - source.y) * Math.max(0, Math.min(1, t));
-      const distance = Math.abs(node.y - chordY);
-      if (distance < NODE_RADIUS + CLEARANCE) {
-        score += 220 + (NODE_RADIUS + CLEARANCE - distance) * 18;
-      }
-    }
-  }
-
-  // Chord crossings are a cheap proxy during lane search. Exact routed-curve
-  // crossings are evaluated for the small set of finalist layouts.
-  for (let first = 0; first < valid.length; first += 1) {
-    const a = valid[first];
-    const aSource = byId.get(a.source)!;
-    const aTarget = byId.get(a.target)!;
-    for (let second = first + 1; second < valid.length; second += 1) {
-      const b = valid[second];
-      if (
-        a.source === b.source || a.source === b.target
-        || a.target === b.source || a.target === b.target
-      ) continue;
-      if (properIntersection(aSource, aTarget, byId.get(b.source)!, byId.get(b.target)!)) score += 2_400;
-    }
-  }
-
-  // Soft separation for nodes that share a lane and are horizontal neighbors.
-  for (let i = 0; i < nodes.length; i += 1) {
-    for (let j = i + 1; j < nodes.length; j += 1) {
-      if (nodes[i].y !== nodes[j].y) continue;
-      const dx = Math.abs(nodes[i].x - nodes[j].x);
-      if (dx > 0 && dx < HORIZONTAL_STEP * 1.1) score += 12;
-    }
-  }
-  return score;
-}
-
-function hash(value: string): number {
-  let result = 0;
-  for (const character of value) result = (result * 31 + character.charCodeAt(0)) >>> 0;
-  return result;
-}
-
-function median(values: number[]): number {
-  if (!values.length) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
-}
-
-/**
- * Places nodes on a fixed left-to-right order (caller supplies date-sorted ids).
- * Only vertical lanes are optimized; X is strictly monotonic with input order.
- */
-export function layoutDependencyNodes(
-  nodeIds: string[],
-  edges: DependencyLayoutEdge[],
-  laneCountOverride?: number,
-): DependencyNodeLayout {
-  if (!nodeIds.length) return { nodes: [], width: 1000 };
-  const edgeCount = edges.filter((edge) => edge.source !== edge.target).length;
-  const density = edgeCount / Math.max(1, nodeIds.length);
-  const defaultLaneCount = Math.max(1, Math.min(8, Math.ceil(nodeIds.length / 4) + (density > 1 ? 1 : 0)));
-  const laneCount = Math.max(1, Math.min(MAX_LANES, laneCountOverride ?? defaultLaneCount));
-  const width = Math.max(1000, 100 + Math.max(0, nodeIds.length - 1) * HORIZONTAL_STEP);
-  const degrees = new Map(nodeIds.map((id) => [id, 0]));
-  for (const edge of edges) {
-    if (degrees.has(edge.source)) degrees.set(edge.source, degrees.get(edge.source)! + 1);
-    if (degrees.has(edge.target)) degrees.set(edge.target, degrees.get(edge.target)! + 1);
-  }
-  const neighbors = neighborsOf(nodeIds, edges);
-  const optimizationOrder = nodeIds.map((_, index) => index)
-    .sort((a, b) => degrees.get(nodeIds[b])! - degrees.get(nodeIds[a])! || a - b);
-
-  const makeNodes = (lanes: number[]) => nodeIds.map((id, index) => ({
-    id,
-    x: nodeIds.length === 1 ? width / 2 : 50 + index * HORIZONTAL_STEP,
-    y: 70 + lanes[index] * LANE_GAP,
-  }));
-
-  const seeds = Array.from({ length: LAYOUT_SEEDS }, (_, seed) => {
-    if (seed === 0) {
-      // Barycenter-ish seed: place left-to-right near the median of already placed neighbors.
-      const lanes = nodeIds.map(() => 0);
-      nodeIds.forEach((id, index) => {
-        const placed = neighbors.get(id)!
-          .map((other) => nodeIds.indexOf(other))
-          .filter((otherIndex) => otherIndex >= 0 && otherIndex < index)
-          .map((otherIndex) => lanes[otherIndex]);
-        if (placed.length) {
-          lanes[index] = Math.max(0, Math.min(laneCount - 1, Math.round(median(placed))));
-        } else {
-          lanes[index] = index % Math.min(3, laneCount);
-        }
-      });
-      return lanes;
-    }
-    if (seed === 1) return nodeIds.map((_, index) => index % laneCount);
-    return nodeIds.map((id) => hash(id) % laneCount);
-  });
-
-  const improve = (initial: number[]) => {
-    const lanes = [...initial];
-    for (let pass = 0; pass < IMPROVEMENT_PASSES; pass += 1) {
-      const previous = lanes.join(",");
-      for (const nodeIndex of optimizationOrder) {
-        // Prefer lanes near the barycenter of graph neighbors.
-        const neighborLanes = neighbors.get(nodeIds[nodeIndex])!
-          .map((id) => lanes[nodeIds.indexOf(id)])
-          .filter((lane) => Number.isFinite(lane));
-        const focus = neighborLanes.length ? median(neighborLanes) : lanes[nodeIndex];
-        const laneOrder = Array.from({ length: laneCount }, (_, lane) => lane)
-          .sort((a, b) => Math.abs(a - focus) - Math.abs(b - focus) || a - b);
-
-        let chosenLane = lanes[nodeIndex];
-        let chosenScore = Infinity;
-        for (const lane of laneOrder) {
-          lanes[nodeIndex] = lane;
-          const score = layoutScore(makeNodes(lanes), edges);
-          // Tiny bias toward the neighbor median when scores tie.
-          const biased = score + Math.abs(lane - focus) * .01;
-          if (biased < chosenScore) {
-            chosenScore = biased;
-            chosenLane = lane;
-          }
-        }
-        lanes[nodeIndex] = chosenLane;
-      }
-      if (lanes.join(",") === previous) break;
-    }
-
-    // Explicit barycenter sweeps: snap each node toward the median of its neighbors
-    // when that does not worsen the global score (smooths short chains).
-    for (let pass = 0; pass < BARYCENTER_PASSES; pass += 1) {
-      for (const nodeIndex of optimizationOrder) {
-        const neighborLanes = neighbors.get(nodeIds[nodeIndex])!
-          .map((id) => lanes[nodeIds.indexOf(id)])
-          .filter((lane) => Number.isFinite(lane));
-        if (!neighborLanes.length) continue;
-        const targetLane = Math.max(0, Math.min(laneCount - 1, Math.round(median(neighborLanes))));
-        if (targetLane === lanes[nodeIndex]) continue;
-        const before = layoutScore(makeNodes(lanes), edges);
-        const previous = lanes[nodeIndex];
-        lanes[nodeIndex] = targetLane;
-        const after = layoutScore(makeNodes(lanes), edges);
-        if (after > before + 1) lanes[nodeIndex] = previous;
-      }
-    }
-    return lanes;
-  };
-
-  let bestLanes = seeds[0];
-  let bestScore = Infinity;
-  for (const seed of seeds) {
-    const lanes = improve(seed);
-    const score = layoutScore(makeNodes(lanes), edges);
-    if (score < bestScore) {
-      bestScore = score;
-      bestLanes = [...lanes];
-    }
-  }
-
-  const minLane = Math.min(...bestLanes);
-  return { nodes: makeNodes(bestLanes.map((lane) => lane - minLane)), width };
-}
-
-function routePairCrosses(
-  first: Array<[Point, Point, Point, Point]>,
-  second: Array<[Point, Point, Point, Point]>,
-): boolean {
-  const a = routePairSamples(first);
-  const b = routePairSamples(second);
-  for (let i = 1; i < a.length; i += 1) {
-    for (let j = 1; j < b.length; j += 1) {
-      if (properIntersection(a[i - 1], a[i], b[j - 1], b[j])) return true;
-    }
+function pathsCross(a: Point[], b: Point[]): boolean {
+  for (let i = 1; i < a.length; i++) for (let j = 1; j < b.length; j++) {
+    if (intersects(a[i - 1], a[i], b[j - 1], b[j])) return true;
   }
   return false;
 }
 
-/** Number of route pairs with a proper crossing, including incident edges. */
 export function countRouteCrossings(routes: RoutedDependencyEdge[]): number {
-  let crossings = 0;
-  for (let first = 0; first < routes.length; first += 1) {
-    for (let second = first + 1; second < routes.length; second += 1) {
-      const a = routes[first];
-      const b = routes[second];
-      if (routePairCrosses(a.segments, b.segments)) crossings += 1;
-    }
-  }
-  return crossings;
+  const paths = routes.map((r) => flatten(r.segments, .15));
+  let count = 0;
+  for (let i = 0; i < paths.length; i++) for (let j = i + 1; j < paths.length; j++) if (pathsCross(paths[i], paths[j])) count++;
+  return count;
 }
 
-function dateKeyValue(dateKey: string | null): string {
-  return dateKey ?? "\uffff";
+function cleanEdges(ids: Set<string>, edges: DependencyLayoutEdge[]): DependencyLayoutEdge[] {
+  return [...new Map(edges.filter((e) => ids.has(e.source) && ids.has(e.target)).map((e) => [edgeKey(e), e])).values()]
+    .sort((a, b) => compare(edgeKey(a), edgeKey(b)));
 }
 
-function sameDateTopologicalRanks(
-  inputNodes: DependencyLayoutInputNode[],
-  edges: DependencyLayoutEdge[],
-): Map<string, number> {
-  const dates = new Map(inputNodes.map((node) => [node.id, dateKeyValue(node.dateKey)]));
-  const ranks = new Map(inputNodes.map((node) => [node.id, 0]));
-  const dateGroups = new Map<string, string[]>();
-  for (const node of inputNodes) {
-    const date = dates.get(node.id)!;
-    dateGroups.set(date, [...(dateGroups.get(date) ?? []), node.id]);
+/** Tarjan components keep same-date cycles in a single column, never an arbitrary backwards ordering. */
+function components(ids: string[], edges: DependencyLayoutEdge[]): string[][] {
+  const adjacency = new Map(ids.map((id) => [id, [] as string[]]));
+  for (const e of edges) adjacency.get(e.source)?.push(e.target);
+  let next = 0;
+  const index = new Map<string, number>(), low = new Map<string, number>();
+  const stack: string[] = [], active = new Set<string>(), result: string[][] = [];
+  function visit(id: string) {
+    index.set(id, next); low.set(id, next++); stack.push(id); active.add(id);
+    for (const other of adjacency.get(id) ?? []) {
+      if (!index.has(other)) { visit(other); low.set(id, Math.min(low.get(id)!, low.get(other)!)); }
+      else if (active.has(other)) low.set(id, Math.min(low.get(id)!, index.get(other)!));
+    }
+    if (index.get(id) === low.get(id)) {
+      const group: string[] = [];
+      let other: string;
+      do { other = stack.pop()!; active.delete(other); group.push(other); } while (other !== id);
+      result.push(group.sort(compare));
+    }
+  }
+  ids.forEach((id) => { if (!index.has(id)) visit(id); });
+  return result;
+}
+
+function calendarColumns(input: DependencyLayoutInputNode[], edges: DependencyLayoutEdge[]): Map<string, number> {
+  const groups = new Map<string, string[]>();
+  for (const n of [...input].sort((a, b) => compare(a.id, b.id))) {
+    const key = n.dateKey ?? '\uffff';
+    groups.set(key, [...(groups.get(key) ?? []), n.id]);
+  }
+  const columns = new Map<string, number>();
+  let offset = 0;
+  for (const date of [...groups.keys()].sort(compare)) {
+    const ids = groups.get(date)!, set = new Set(ids);
+    const local = edges.filter((e) => set.has(e.source) && set.has(e.target));
+    const scc = components(ids, local), membership = new Map(scc.flatMap((g, i) => g.map((id) => [id, i] as const)));
+    const ranks = scc.map(() => 0);
+    // Condensation is acyclic; bounded relaxation computes its longest paths.
+    for (let pass = 0; pass < scc.length; pass++) {
+      let changed = false;
+      for (const e of local) {
+        const a = membership.get(e.source)!, b = membership.get(e.target)!;
+        if (a !== b && ranks[b] <= ranks[a]) { ranks[b] = ranks[a] + 1; changed = true; }
+      }
+      if (!changed) break;
+    }
+    scc.forEach((g, i) => g.forEach((id) => columns.set(id, offset + ranks[i])));
+    offset += Math.max(...ranks) + 1;
+  }
+  return columns;
+}
+
+interface Vertex extends Point { id: string; real: boolean; column: number; neighbors: Vertex[] }
+interface Placement extends DependencyNodeLayout { guides: Map<string, Point[]> }
+
+function place(input: DependencyLayoutInputNode[], edges: DependencyLayoutEdge[], fixedColumns?: Map<string, number>): Placement {
+  if (!input.length) return { nodes: [], width: 140, guides: new Map() };
+  const columns = fixedColumns ?? calendarColumns(input, edges);
+  const layers: Vertex[][] = Array.from({ length: Math.max(...columns.values()) + 1 }, () => []);
+  const vertices = new Map<string, Vertex>();
+  for (const n of [...input].sort((a, b) => compare(a.id, b.id))) {
+    const column = columns.get(n.id)!;
+    const v: Vertex = { id: n.id, real: true, column, x: PAD + column * COLUMN, y: 0, neighbors: [] };
+    vertices.set(n.id, v); layers[column].push(v);
+  }
+  const chains = new Map<string, Vertex[]>();
+  for (const e of edges) {
+    const a = vertices.get(e.source)!, b = vertices.get(e.target)!;
+    const left = a.column <= b.column ? a : b, right = left === a ? b : a;
+    const chain = [left];
+    for (let column = left.column + 1; column < right.column; column++) {
+      const v: Vertex = { id: `edge:${edgeKey(e)}:${column}`, real: false, column, x: PAD + column * COLUMN, y: 0, neighbors: [] };
+      layers[column].push(v); chain.push(v);
+    }
+    chain.push(right);
+    for (let i = 1; i < chain.length; i++) { chain[i - 1].neighbors.push(chain[i]); chain[i].neighbors.push(chain[i - 1]); }
+    chains.set(edgeKey(e), a === left ? chain : [...chain].reverse());
+  }
+  // Weak components start together so unrelated chains don't interleave.
+  const group = new Map<Vertex, number>();
+  let groupId = 0;
+  for (const v of vertices.values()) {
+    if (group.has(v)) continue;
+    const queue = [v]; group.set(v, groupId++);
+    for (let i = 0; i < queue.length; i++) for (const n of queue[i].neighbors) {
+      if (!group.has(n)) { group.set(n, group.get(v)!); queue.push(n); }
+    }
+  }
+  layers.forEach((layer) => layer.sort((a, b) => group.get(a)! - group.get(b)! || compare(a.id, b.id)));
+  const orders = () => new Map(layers.flatMap((layer) => layer.map((v, i) => [v, i] as const)));
+  function crossingScore(): number {
+    const rank = orders();
+    let score = 0;
+    for (let c = 0; c < layers.length - 1; c++) {
+      const links = layers[c].flatMap((a) => a.neighbors.filter((b) => b.column === c + 1).map((b) => [a, b]));
+      for (let i = 0; i < links.length; i++) for (let j = i + 1; j < links.length; j++) {
+        if ((rank.get(links[i][0])! - rank.get(links[j][0])!) * (rank.get(links[i][1])! - rank.get(links[j][1])!) < 0) score++;
+      }
+    }
+    return score;
+  }
+  let best = layers.map((l) => [...l]), bestScore = crossingScore();
+  const initial = layers.map((layer) => [...layer]);
+  for (let seed = 0; seed < 8; seed++) {
+    initial.forEach((layer, c) => {
+      const shift = seed < 4 ? Math.floor(layer.length * seed / 4) : 0;
+      layers[c] = [...layer.slice(shift), ...layer.slice(0, shift)];
+      if (seed >= 4 && c % 4 === seed - 4) layers[c].reverse();
+    });
+    for (let sweep = 0; sweep < 12; sweep++) {
+      const direction = sweep % 2 ? -1 : 1;
+      const sequence = direction === 1 ? layers : [...layers].reverse();
+      for (const layer of sequence) {
+        const ranks = orders();
+        const center = (v: Vertex) => {
+          const adjacent = v.neighbors.filter((n) => n.column === v.column - direction);
+          return adjacent.length ? adjacent.reduce((sum, n) => sum + ranks.get(n)!, 0) / adjacent.length : ranks.get(v)!;
+        };
+        layer.sort((a, b) => center(a) - center(b) || ranks.get(a)! - ranks.get(b)!);
+      }
+      // Adjacent transposition considers both sides, unlike a one-sided sweep.
+      for (const layer of layers) for (let pass = 0; pass < 3; pass++) {
+        let changed = false;
+        for (let i = 1; i < layer.length; i++) {
+          const ranks = orders(), a = layer[i - 1], b = layer[i];
+          let delta = 0;
+          for (const na of a.neighbors) for (const nb of b.neighbors) {
+            if (na.column !== nb.column || na === nb || na.column === a.column) continue;
+            delta += ranks.get(na)! < ranks.get(nb)! ? 1 : -1;
+          }
+          if (delta < 0) { [layer[i - 1], layer[i]] = [b, a]; changed = true; }
+        }
+        if (!changed) break;
+      }
+      const score = crossingScore();
+      if (score < bestScore) { bestScore = score; best = layers.map((l) => [...l]); }
+    }
   }
 
-  for (const ids of dateGroups.values()) {
-    const inGroup = new Set(ids);
-    const outgoing = new Map(ids.map((id) => [id, [] as string[]]));
-    const indegree = new Map(ids.map((id) => [id, 0]));
-    for (const edge of edges) {
-      if (!inGroup.has(edge.source) || !inGroup.has(edge.target) || edge.source === edge.target) continue;
-      outgoing.get(edge.source)!.push(edge.target);
-      indegree.set(edge.target, indegree.get(edge.target)! + 1);
+  best.forEach((layer, c) => { layers[c] = layer; });
+  const gap = (a: Vertex, b: Vertex) => (a.real ? 55 : 18) + (b.real ? 55 : 18);
+  layers.forEach((layer) => {
+    let y = 0;
+    layer.forEach((v, i) => { if (i) y += gap(layer[i - 1], v); v.y = y; });
+    layer.forEach((v) => { v.y -= y / 2; });
+  });
+  // Isotonic projection: align neighbors while preserving the chosen order and
+  // actual node/edge widths. Virtual vertices need less space than task circles.
+  for (let pass = 0; pass < 80; pass++) for (const layer of pass % 2 ? [...layers].reverse() : layers) {
+    const offsets = [0];
+    for (let i = 1; i < layer.length; i++) offsets[i] = offsets[i - 1] + gap(layer[i - 1], layer[i]);
+    const blocks: { start: number; end: number; sum: number; weight: number }[] = [];
+    layer.forEach((v, i) => {
+      const target = v.neighbors.length ? v.neighbors.reduce((sum, n) => sum + n.y, 0) / v.neighbors.length : v.y;
+      const weight = v.real ? 2 : 1;
+      blocks.push({ start: i, end: i, sum: ((v.y + target * 3) / 4 - offsets[i]) * weight, weight });
+      while (blocks.length > 1) {
+        const b = blocks.at(-1)!, a = blocks.at(-2)!;
+        if (a.sum / a.weight <= b.sum / b.weight) break;
+        blocks.pop(); a.end = b.end; a.sum += b.sum; a.weight += b.weight;
+      }
+    });
+    for (const b of blocks) for (let i = b.start; i <= b.end; i++) layer[i].y = b.sum / b.weight + offsets[i];
+  }
+  const min = Math.min(...layers.flat().map((v) => v.y));
+  layers.flat().forEach((v) => { v.y = Math.round((v.y - min + PAD) * 1000) / 1000; });
+  const nodes = [...vertices.values()].map(({ id, x, y }) => ({ id, x, y })).sort((a, b) => a.x - b.x || a.y - b.y || compare(a.id, b.id));
+  return { nodes, width: PAD * 2 + (layers.length - 1) * COLUMN,
+    guides: new Map([...chains].map(([key, chain]) => [key, chain.map(({ x, y }) => ({ x, y }))])) };
+}
+
+/** A single spline family, including detours. Every segment is monotone in X.
+ * End tangents define radial ports; incoming arrows cannot reverse direction.
+ */
+function spline(points: Point[], portOffset = 0, verticalPorts = false, arrivalOffset = -portOffset): Cubic[] {
+  const p = points.map((v) => ({ ...v }));
+  const slopes = p.slice(1).map((v, i) => (v.y - p[i].y) / (v.x - p[i].x));
+  const tangents = p.map((_, i) => i === 0 ? slopes[0] : i === p.length - 1 ? slopes.at(-1)! :
+    slopes[i - 1] * slopes[i] <= 0 ? 0 : 2 / (1 / slopes[i - 1] + 1 / slopes[i]));
+  tangents[0] += portOffset; tangents[tangents.length - 1] += arrivalOffset;
+  if (verticalPorts) { tangents[0] = 0; tangents[tangents.length - 1] = 0; }
+  for (const i of [0, p.length - 1]) {
+    const sign = i === 0 ? 1 : -1, dx = (RADIUS + 1) / Math.hypot(1, tangents[i]);
+    p[i].x += sign * dx; p[i].y += sign * dx * tangents[i];
+  }
+  return p.slice(1).map((b, i) => {
+    const a = p[i], h = (b.x - a.x) / 3;
+    return [a, { x: a.x + h, y: a.y + h * tangents[i] }, { x: b.x - h, y: b.y - h * tangents[i + 1] }, b];
+  });
+}
+
+function route(edge: DependencyLayoutEdge, segments: Cubic[]): RoutedDependencyEdge {
+  const number = (v: number) => String(Math.round(v * 1000) / 1000);
+  const point = (p: Point) => `${number(p.x)},${number(p.y)}`;
+  return { ...edge, segments, d: `M ${point(segments[0][0])}` + segments.map((s) => ` C ${s.slice(1).map(point).join(' ')}`).join('') };
+}
+
+interface Candidate { route: RoutedDependencyEdge; path: Point[]; cost: number; guided?: boolean }
+
+function candidates(nodes: DependencyLayoutNode[], edge: DependencyLayoutEdge, guide?: Point[]): Candidate[] {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const source = byId.get(edge.source)!, target = byId.get(edge.target)!;
+  // Vertical edges (including same-date SCCs) use the identical spline in a
+  // rotated coordinate frame. Self loops are isolated smooth cubic loops.
+  if (source.id === target.id) {
+    const x = source.x, y = source.y;
+    const loops: Candidate[] = [];
+    for (const size of [64, 96, 144, 216]) for (const side of [1, -1]) {
+      const outer = x + side * size;
+      const segments: Cubic[] = [
+        [{ x, y: y - 29 }, { x, y: y - size }, { x: outer, y: y - size }, { x: outer, y }],
+        [{ x: outer, y }, { x: outer, y: y + size }, { x, y: y + size }, { x, y: y + 29 }],
+      ];
+      if (routeClearance(segments, nodes, edge.source, edge.target) >= CLEARANCE) {
+        loops.push({ route: route(edge, segments), path: flatten(segments), cost: size * 4 });
+      }
     }
-    for (const targets of outgoing.values()) targets.sort();
-    const ready = ids.filter((id) => indegree.get(id) === 0).sort();
-    while (ready.length) {
-      const id = ready.shift()!;
-      for (const target of outgoing.get(id)!) {
-        ranks.set(target, Math.max(ranks.get(target)!, ranks.get(id)! + 1));
-        indegree.set(target, indegree.get(target)! - 1);
-        if (indegree.get(target) === 0) {
-          ready.push(target);
-          ready.sort();
+    if (!loops.length) throw new Error('Unable to find a clear dependency loop');
+    return loops;
+  }
+  const vertical = source.x === target.x;
+  const transform = (p: Point): Point => vertical ? { x: p.y, y: -p.x } : { x: p.x, y: p.y };
+  const restore = (p: Point): Point => vertical ? { x: -p.y, y: p.x } : p;
+  const transformed = nodes.map((n) => ({ ...n, ...transform(n) }));
+  const a = transform(source), b = transform(target), reverse = a.x > b.x;
+  const left = reverse ? b : a, right = reverse ? a : b;
+  const span = right.x - left.x;
+  const obstacles = transformed.filter((n) => n.id !== source.id && n.id !== target.id && n.x > left.x && n.x < right.x);
+  const chord = (x: number) => left.y + (right.y - left.y) * (x - left.x) / span;
+  const options: Point[][] = [[left, right]];
+  const broadArches = new Set<Point[]>();
+  let primaryGuide: Point[] | undefined;
+  if (guide && guide.length > 2 && !vertical) {
+    const ordered = (reverse ? [...guide].reverse() : guide).map(transform);
+    primaryGuide = ordered; options.unshift(ordered);
+    for (const shift of [-18, 18, -36, 36]) options.unshift(ordered.map((p, i) =>
+      i === 0 || i === ordered.length - 1 ? p : { x: p.x, y: p.y + shift }));
+  }
+  // Obstacle-column corridors, selected by dynamic programming. Penalties for
+  // height and bending favor local deviations, not excursions around the graph.
+  const xs = [...new Set(obstacles.map((n) => n.x))].sort((a, b) => a - b);
+  for (const bias of [0, -1, 1, -2, 2]) {
+    type Step = { p: Point; cost: number; previous?: Step };
+    let previous: Step[] = [{ p: left, cost: 0 }];
+    for (const x of xs) {
+      const at = obstacles.filter((n) => Math.abs(n.x - x) < 1);
+      const values = [chord(x), ...at.flatMap((n) => [n.y - 54 - Math.abs(bias) * 12, n.y + 54 + Math.abs(bias) * 12])];
+      const ys = [...new Set(values)].filter((y) => at.every((n) => Math.abs(y - n.y) >= 48));
+      previous = ys.map((y) => {
+        const p = { x, y };
+        let best: Step | undefined, cost = Infinity;
+        for (const step of previous) {
+          const next = step.cost + distance(step.p, p) + Math.abs(y - chord(x)) * .15 + bias * (y - chord(x)) * .12;
+          if (next < cost) { cost = next; best = step; }
+        }
+        return { p, cost, previous: best };
+      });
+    }
+    const last = previous.sort((a, b) => a.cost + distance(a.p, right) - b.cost - distance(b.p, right))[0];
+    const points = [right];
+    for (let step: Step | undefined = last; step; step = step.previous) points.push(step.p);
+    options.push(points.reverse());
+  }
+  // Smooth arch candidates give competing edges independent corridors. The
+  // quarter-span knots let dense spines clear obstacles close to either end.
+  const high = Math.min(left.y, right.y, ...obstacles.map((n) => n.y));
+  const low = Math.max(left.y, right.y, ...obstacles.map((n) => n.y));
+  for (const side of [-1, 1]) for (const height of [48, 80, 120, 180, 260]) {
+    const y = side < 0 ? high - height : low + height;
+    // Include broad shoulders so a compact detour can still turn gently.
+    for (const inset of new Set([Math.min(120, span / 3), Math.min(RADIUS * 8, span / 3)])) {
+      const arch = [left, { x: left.x + inset, y }, { x: (left.x + right.x) / 2, y: y + side * height * .15 }, { x: right.x - inset, y }, right];
+      options.push(arch);
+      if (inset > 120) broadArches.add(arch);
+    }
+  }
+  const result: Candidate[] = [];
+  for (const points of options) {
+    const ports = (points.length === 2 ? [0, -.3, .3, -.7, .7, -1.2, 1.2, -2, 2, -4, 4] : [0, -.3, .3]).map((v) => [v, -v]);
+    if (broadArches.has(points)) ports.push([-1, 1], [1, -1]);
+    if (points.length === 2) ports.push(...[-4, -2, -1, 1, 2, 4].flatMap((v) => [[v, 0], [0, v]]));
+    for (const [offset, arrival] of ports) {
+      let segments = spline(points, offset, vertical, arrival).map((s) => s.map(restore) as Cubic);
+      if (reverse) segments = segments.reverse().map(([a, b, c, d]) => [d, c, b, a]);
+      const clearance = routeClearance(segments, nodes, edge.source, edge.target);
+      if (clearance < CLEARANCE) continue;
+      const path = flatten(segments);
+      let length = 0, drift = 0, bending = 0;
+      for (let i = 1; i < path.length; i++) { length += distance(path[i - 1], path[i]); drift += pointSegment(path[i], source, target); }
+      for (let i = 1; i + 1 < path.length; i++) {
+        const a = path[i - 1], b = path[i], c = path[i + 1];
+        const first = distance(a, b), second = distance(b, c);
+        if (first * second > 0) {
+          const cosine = Math.max(-1, Math.min(1, ((b.x - a.x) * (c.x - b.x) + (b.y - a.y) * (c.y - b.y)) / (first * second)));
+          bending += Math.acos(cosine) ** 2 / (first + second);
         }
       }
+      // Curvature alone rewards a huge, gentle bow. Charge for its peak
+      // excursion beyond the local obstacle envelope as well as mean drift.
+      // This is measured in graph units, independent of the edge's X span.
+      const localY = path.map((p) => transform(p).y);
+      const excursion = Math.max(0, high - CLEARANCE - Math.min(...localY), Math.max(...localY) - low - CLEARANCE);
+      result.push({ route: route(edge, segments), path,
+        cost: length + drift / path.length * .8 + bending * 16000 + Math.abs(offset) * 8 + excursion ** 2 * .12,
+        guided: points === primaryGuide && offset === 0 });
     }
-    // A same-date cycle has no fully rightward ordering. The existing cycle alert
-    // remains the user-facing signal; deterministic ID order handles its SCC here.
   }
-  return ranks;
+  result.sort((a, b) => a.cost - b.cost);
+  if (!result.length) throw new Error('Unable to find a clear dependency route');
+  return [...new Map([...result.filter((c) => c.guided), ...result].map((c) => [c.route.d, c])).values()];
 }
 
-function sameDateOrders(inputNodes: DependencyLayoutInputNode[], edges: DependencyLayoutEdge[]): string[][] {
-  const ranks = sameDateTopologicalRanks(inputNodes, edges);
-  const canonical = [...inputNodes]
-    .sort((a, b) => dateKeyValue(a.dateKey).localeCompare(dateKeyValue(b.dateKey))
-      || ranks.get(a.id)! - ranks.get(b.id)!
-      || a.id.localeCompare(b.id))
-    .map(({ id }) => id);
-  const dates = new Map(inputNodes.map((node) => [node.id, dateKeyValue(node.dateKey)]));
-  const neighbors = neighborsOf(canonical, edges);
-  const refined = [...canonical];
-
-  // Alternating barycentric sweeps refine only equal-date buckets. Neighbor lists
-  // are sorted so relation input order cannot affect tie-breaking.
-  for (let pass = 0; pass < 4; pass += 1) {
-    const positions = new Map(refined.map((id, index) => [id, index]));
-    const groups: Array<{ start: number; end: number }> = [];
-    for (let start = 0; start < refined.length;) {
-      let end = start + 1;
-      while (end < refined.length && dates.get(refined[end]) === dates.get(refined[start])) end += 1;
-      groups.push({ start, end });
-      start = end;
-    }
-    if (pass % 2) groups.reverse();
-    for (const { start, end } of groups) {
-      const ordered = refined.slice(start, end).map((id) => {
-        const adjacent = [...(neighbors.get(id) ?? [])]
-          .sort()
-          .map((neighbor) => positions.get(neighbor))
-          .filter((position): position is number => position !== undefined);
-        return { id, rank: ranks.get(id)!, focus: adjacent.length ? median(adjacent) : positions.get(id)! };
-      });
-      ordered.sort((a, b) => a.rank - b.rank || a.focus - b.focus || a.id.localeCompare(b.id));
-      refined.splice(start, end - start, ...ordered.map(({ id }) => id));
+/** Length of two nearly parallel polylines occupying the same visible corridor. */
+function parallelOverlap(a: Point[], b: Point[], threshold: number): number {
+  let overlap = 0;
+  for (let i = 1; i < a.length; i++) {
+    const p = a[i - 1], q = a[i], length = distance(p, q);
+    if (!length) continue;
+    const ux = (q.x - p.x) / length, uy = (q.y - p.y) / length;
+    for (let j = 1; j < b.length; j++) {
+      const r = b[j - 1], s = b[j], otherLength = distance(r, s);
+      if (!otherLength) continue;
+      const alignment = Math.abs(ux * (s.x - r.x) + uy * (s.y - r.y)) / otherLength;
+      if (alignment < .985) continue;
+      const rAlong = (r.x - p.x) * ux + (r.y - p.y) * uy;
+      const sAlong = (s.x - p.x) * ux + (s.y - p.y) * uy;
+      let lo = Math.max(0, Math.min(rAlong, sAlong)), hi = Math.min(length, Math.max(rAlong, sAlong));
+      if (hi <= lo) continue;
+      const rAway = (r.x - p.x) * uy - (r.y - p.y) * ux;
+      const sAway = (s.x - p.x) * uy - (s.y - p.y) * ux;
+      const slope = (sAway - rAway) / (sAlong - rAlong);
+      if (Math.abs(slope) < 1e-8) { if (Math.abs(rAway) >= threshold) continue; }
+      else {
+        const first = rAlong + (-threshold - rAway) / slope;
+        const last = rAlong + (threshold - rAway) / slope;
+        lo = Math.max(lo, Math.min(first, last)); hi = Math.min(hi, Math.max(first, last));
+      }
+      overlap += Math.max(0, hi - lo);
     }
   }
-
-  return refined.every((id, index) => id === canonical[index]) ? [canonical] : [canonical, refined];
+  return overlap;
 }
 
-function graphLayoutScore(
-  nodes: DependencyLayoutNode[],
-  edges: DependencyLayoutEdge[],
-  routes: RoutedDependencyEdge[],
-  radius: number,
-): number {
-  const byId = new Map(nodes.map((node) => [node.id, node]));
-  // Chords are only a placement proxy. Once curves exist, their actual
-  // crossings/clearance must dominate rather than counting chord conflicts twice.
-  let score = layoutScore(nodes, edges) * .05;
-  const ys = nodes.map(({ y }) => y);
-  score += (Math.max(...ys) - Math.min(...ys)) * 1.5;
-
-  for (const route of routes) {
-    const source = byId.get(route.source)!;
-    const target = byId.get(route.target)!;
-    score += scoreRoute(route.segments, nodes, source, target, radius);
-  }
-  for (let first = 0; first < routes.length; first += 1) {
-    for (let second = first + 1; second < routes.length; second += 1) {
-      const a = routes[first];
-      const b = routes[second];
-      score += routePairCost(a.segments, b.segments);
-    }
-  }
-  return score;
+function pairCost(a: Candidate, b: Candidate): number {
+  const overlap = parallelOverlap(a.path, b.path, 8);
+  const coincident = overlap > 12 ? parallelOverlap(a.path, b.path, 2) : 0;
+  const incident = a.route.source === b.route.source || a.route.target === b.route.target
+    || a.route.source === b.route.target || a.route.target === b.route.source;
+  return (pathsCross(a.path, b.path) ? (incident ? 400000 : 100000) : 0)
+    + overlap * 200 + Math.max(0, coincident - 12) * 100000;
 }
 
-function refineConflictedNodes(
-  original: DependencyLayoutNode[],
-  edges: DependencyLayoutEdge[],
-  routes: RoutedDependencyEdge[],
-  dates: Map<string, string>,
-  ranks: Map<string, number>,
-  maximumLanes: number,
-): DependencyLayoutNode[] | null {
-  const conflicted = new Set<string>();
-  for (let first = 0; first < routes.length; first += 1) {
-    for (let second = first + 1; second < routes.length; second += 1) {
-      const a = routes[first];
-      const b = routes[second];
-      if (routePairCrosses(a.segments, b.segments)) {
-        conflicted.add(a.source); conflicted.add(a.target);
-        conflicted.add(b.source); conflicted.add(b.target);
+function routed(nodes: DependencyLayoutNode[], edges: DependencyLayoutEdge[], guides?: Map<string, Point[]>): DependencyLayout {
+  const options = edges.map((e) => candidates(nodes, e, guides?.get(edgeKey(e))));
+  let selection = options.map(() => 0);
+  const pairCache = new Map<string, number>();
+  const pair = (i: number, a: number, j: number, b: number) => {
+    if (i > j) return pair(j, b, i, a);
+    const key = `${i}:${a}:${j}:${b}`;
+    let value = pairCache.get(key);
+    if (value === undefined) { value = pairCost(options[i][a], options[j][b]); pairCache.set(key, value); }
+    return value;
+  };
+  let bestSelection = [...selection], bestTotal = Infinity;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    selection = options.map(() => 0);
+    const order = edges.map((_, i) => i);
+    if (attempt === 1) order.reverse();
+    if (attempt === 2) order.sort((a, b) => options[b][0].cost - options[a][0].cost || a - b);
+    for (let pass = 0; pass < 4; pass++) {
+      let changed = false;
+      for (let k = 0; k < edges.length; k++) {
+        const i = order[pass % 2 ? edges.length - k - 1 : k];
+        let best = selection[i], bestCost = Infinity;
+        for (let c = 0; c < options[i].length; c++) {
+          let cost = options[i][c].cost;
+          for (let j = 0; j < edges.length && cost < bestCost; j++) if (i !== j) cost += pair(i, c, j, selection[j]);
+          if (cost < bestCost - 1e-6) { best = c; bestCost = cost; }
+        }
+        if (best !== selection[i]) { selection[i] = best; changed = true; }
+      }
+      if (!changed) break;
+    }
+    // A fan-out can be trapped if moving either route alone adds a crossing.
+    // Jointly reconsider only conflicting pairs, with a fixed two-pass budget.
+    for (let pass = 0; pass < 2; pass++) {
+      for (let i = 0; i < edges.length; i++) for (let j = i + 1; j < edges.length; j++) {
+        if (pair(i, selection[i], j, selection[j]) < 10000) continue;
+        const external = (index: number, option: number, other: number) => {
+          let cost = options[index][option].cost;
+          for (let k = 0; k < edges.length; k++) if (k !== index && k !== other) cost += pair(index, option, k, selection[k]);
+          return cost;
+        };
+        const aCosts = options[i].map((_, c) => external(i, c, j));
+        const bCosts = options[j].map((_, c) => external(j, c, i));
+        let best = aCosts[selection[i]] + bCosts[selection[j]] + pair(i, selection[i], j, selection[j]);
+        let aBest = selection[i], bBest = selection[j];
+        for (let a = 0; a < aCosts.length; a++) for (let b = 0; b < bCosts.length; b++) {
+          if (aCosts[a] + bCosts[b] >= best) continue;
+          const cost = aCosts[a] + bCosts[b] + pair(i, a, j, b);
+          if (cost < best - 1e-6) { best = cost; aBest = a; bBest = b; }
+        }
+        selection[i] = aBest; selection[j] = bBest;
       }
     }
+    let total = options.reduce((sum, c, i) => sum + c[selection[i]].cost, 0);
+    for (let i = 0; i < edges.length; i++) for (let j = i + 1; j < edges.length; j++) total += pair(i, selection[i], j, selection[j]);
+    if (total < bestTotal) { bestTotal = total; bestSelection = [...selection]; }
   }
-  if (!conflicted.size) return null;
-
-  const nodes = original.map((node) => ({ ...node }));
-  let currentScore = layoutScore(nodes, edges);
-  let changed = false;
-  for (const node of nodes.filter(({ id }) => conflicted.has(id)).sort((a, b) => a.id.localeCompare(b.id))) {
-    const originalY = node.y;
-    let bestY = originalY;
-    let bestScore = currentScore;
-    for (const y of [originalY - LANE_GAP, originalY + LANE_GAP]) {
-      if (y < 70 || y > 70 + (maximumLanes - 1) * LANE_GAP) continue;
-      node.y = y;
-      const score = layoutScore(nodes, edges);
-      if (score < bestScore - 1) {
-        bestScore = score;
-        bestY = y;
-      }
-    }
-    node.y = bestY;
-    if (bestY !== originalY) changed = true;
-    currentScore = bestScore;
-  }
-
-  const xOrder = [...nodes].sort((a, b) => a.x - b.x);
-  for (let index = 0; index < xOrder.length - 1; index += 1) {
-    const first = xOrder[index];
-    const second = xOrder[index + 1];
-    if (dates.get(first.id) !== dates.get(second.id)) continue;
-    if (ranks.get(first.id) !== ranks.get(second.id)) continue;
-    if (!conflicted.has(first.id) && !conflicted.has(second.id)) continue;
-    [first.x, second.x] = [second.x, first.x];
-    const score = layoutScore(nodes, edges);
-    if (score < currentScore - 1) {
-      currentScore = score;
-      changed = true;
-      [xOrder[index], xOrder[index + 1]] = [second, first];
-    } else {
-      [first.x, second.x] = [second.x, first.x];
-    }
-  }
-  return changed ? nodes : null;
+  selection = bestSelection;
+  const routes = options.map((c, i) => c[selection[i]].route);
+  const points = [...nodes, ...routes.flatMap((r) => flatten(r.segments))];
+  return { routes, minY: Math.min(0, ...points.map((p) => p.y - PAD)), maxY: Math.max(140, ...points.map((p) => p.y + PAD)) };
 }
 
-/**
- * Joint date-aware layout. It explores bounded same-date orders and lane counts,
- * then judges finalists using the actual globally routed curves.
- */
-export function layoutDependencyGraph(
-  inputNodes: DependencyLayoutInputNode[],
-  inputEdges: DependencyLayoutEdge[],
-  radius = NODE_RADIUS,
-): DependencyGraphLayout {
-  if (!inputNodes.length) return { nodes: [], routes: [], width: 1000, minY: 0, maxY: 220 };
-  const nodeIds = new Set(inputNodes.map(({ id }) => id));
-  const edges = inputEdges.filter((edge) => edge.source !== edge.target && nodeIds.has(edge.source) && nodeIds.has(edge.target));
-  const edgeCount = edges.length;
-  const density = edgeCount / Math.max(1, inputNodes.length);
-  const baseLanes = Math.max(1, Math.min(8, Math.ceil(inputNodes.length / 4) + (density > 1 ? 1 : 0)));
-  const maximumLanes = Math.min(MAX_LANES, baseLanes + EXTRA_LANES);
-  const placements: Array<{ layout: DependencyNodeLayout; proxyScore: number; key: string }> = [];
+export function routeDependencyEdges(nodes: DependencyLayoutNode[], edges: DependencyLayoutEdge[]): DependencyLayout {
+  return routed(nodes, cleanEdges(new Set(nodes.map((n) => n.id)), edges));
+}
 
-  for (const order of sameDateOrders(inputNodes, edges)) {
-    for (let lanes = baseLanes; lanes <= maximumLanes; lanes += 1) {
-      const layout = layoutDependencyNodes(order, edges, lanes);
-      placements.push({
-        layout,
-        proxyScore: layoutScore(layout.nodes, edges) + (lanes - baseLanes) * LANE_GAP * 1.5,
-        key: `${order.join("\u0000")}\u0001${lanes}`,
-      });
-    }
+/** Legacy entry point: callers supplying just IDs explicitly prescribe X order. */
+export function layoutDependencyNodes(ids: string[], edges: DependencyLayoutEdge[]): DependencyNodeLayout {
+  const valid = cleanEdges(new Set(ids), edges);
+  const { nodes, width } = place(ids.map((id) => ({ id, dateKey: null })), valid, new Map(ids.map((id, i) => [id, i])));
+  return { nodes, width };
+}
+
+export function layoutDependencyGraph(input: DependencyLayoutInputNode[], edges: DependencyLayoutEdge[]): DependencyGraphLayout {
+  const unique = [...new Map(input.map((n) => [n.id, n])).values()];
+  const valid = cleanEdges(new Set(unique.map((n) => n.id)), edges);
+  const { nodes, width, guides } = place(unique, valid);
+  const layout = routed(nodes, valid, guides);
+  const points = [...nodes, ...layout.routes.flatMap((r) => flatten(r.segments))];
+  const minX = Math.min(PAD, ...points.map((p) => p.x));
+  const shift = Math.max(0, PAD - minX);
+  const maxX = Math.max(width - PAD, ...points.map((p) => p.x));
+  if (shift) {
+    nodes.forEach((n) => { n.x += shift; });
+    layout.routes = layout.routes.map((r) => route(r, r.segments.map((s) => s.map((p) => ({ x: p.x + shift, y: p.y })) as Cubic)));
   }
-
-  placements.sort((a, b) => a.proxyScore - b.proxyScore || a.key.localeCompare(b.key));
-  let best: DependencyGraphLayout | null = null;
-  let bestScore = Infinity;
-  const uniquePlacements = placements.filter(({ layout }, index) => !placements.slice(0, index).some((previous) =>
-    previous.layout.nodes.every((node, i) => node.id === layout.nodes[i].id && node.x === layout.nodes[i].x && node.y === layout.nodes[i].y)));
-  for (const { layout } of uniquePlacements.slice(0, 3)) {
-    const routed = routeDependencyEdges(layout.nodes, edges, radius);
-    const score = graphLayoutScore(layout.nodes, edges, routed.routes, radius);
-    if (score < bestScore) {
-      bestScore = score;
-      best = { ...layout, ...routed };
-    }
-  }
-
-
-  const dates = new Map(inputNodes.map((node) => [node.id, dateKeyValue(node.dateKey)]));
-  const ranks = sameDateTopologicalRanks(inputNodes, edges);
-  const refinedNodes = refineConflictedNodes(best!.nodes, edges, best!.routes, dates, ranks, maximumLanes);
-  if (refinedNodes) {
-    const routed = routeDependencyEdges(refinedNodes, edges, radius);
-    const score = graphLayoutScore(refinedNodes, edges, routed.routes, radius);
-    if (score < bestScore) best = { nodes: refinedNodes, width: best!.width, ...routed };
-  }
-  return separateRouteCorridors(best!, radius);
+  return { nodes, width: maxX + shift + PAD, ...layout };
 }

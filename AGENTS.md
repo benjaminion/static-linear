@@ -78,30 +78,33 @@ styles in `src/styles/global.css` (`.graph-*`).
 
 ### Hard layout constraints
 
-- **Date-monotonic X:** The page supplies each node's effective date from
-  `dependencyIssueDate` (`dueDate ?? project.targetDate`, undated last). Layout
-  sorts and places date groups strictly left-to-right. Do **not** reorder across
-  different dates for topological / layered flow. Same-date (or undated) ties are dependency-aware:
-  topologically order blockers before what they block so same-date arrows do not
-  run right-to-left (except where a same-date cycle makes that impossible), then
-  refine only within equal topological ranks.
-- **Y only optimizes vertical lanes** (with barycenter-style neighbor affinity).
-  Prefer short chains to stay level; do not zig-zag adjacent hops without cause.
-  The balanced optimizer may add at most two lanes beyond the base heuristic and
-  must never exceed ten lanes.
-- **Deterministic:** no random forces; keep fixture/unit tests for order, clearance,
-  crossings, relation-input permutations, and smoothness.
+- **Calendar columns:** effective dates from `dependencyIssueDate` (`dueDate ??
+  project.targetDate`, undated last) determine strictly left-to-right date groups.
+  Within a date, topological ranks determine columns; parallel tasks can share X.
+  Same-date strongly connected components share a column rather than introducing
+  arbitrary backwards edges. Never reorder different dates for topology.
+- **Arrow direction:** every ordinary route is X-monotone, including its endpoint
+  tangents. A left-pointing arrow therefore denotes a dependency on a later date.
+  Same-column cycle edges use vertical arrowheads.
+- **Placement:** long edges have virtual vertices in intervening columns. Order
+  real and virtual vertices together to reduce crossings, then align neighbors
+  while retaining enough separation for circles and edge corridors. Allow more
+  vertical space where necessary; there is no fixed lane-count limit.
+- **Deterministic and bounded:** no random forces. Preserve fixture-backed tests
+  for date order, radial ports, clearance, crossings, overlap, smooth joins, input
+  permutations, and generation of all three task views within 30 seconds.
 
 ### Edge routing
 
-- Prefer a near-chord / corridor path that clears intermediate node discs.
-- Fall back to multi-segment rail detours with **G1 (smooth) joins** — climb and
-  descend must share horizontal tangents with the rail (no visible corners).
-- Score paths on clearance first, then length, mid-path drift from the chord, and
-  joint smoothness. Select routes globally with penalties for non-incident crossings
-  and near-overlap, then use bounded refinement. Dense collinear spines need
-  multi-segment rails; single elevated cubics alone cannot clear near-endpoint obstacles.
-- Attachment is **directional on the rim** (not only left/right sides).
+- Use one family of smooth cubic Hermite splines for direct paths and obstacle
+  detours. Do not mix free curves with separate tramline/rail routing.
+- Attachment tangents must be normal to the task circles. Keep cubic X control
+  points monotone to preserve arrow direction along the entire curve.
+- Reject candidates that intersect intermediate node discs. Use adaptive curve
+  subdivision to check clearance; optimize crossings and sustained near-overlap
+  globally, with bounded individual and paired route refinement.
+- Prefer short, gently bending routes. Penalize prolonged coincident curves,
+  including incident edges, rather than testing only horizontal line overlap.
 
 ### Presentation / interaction
 
