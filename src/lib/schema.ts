@@ -38,7 +38,7 @@ const externalResourceSchema = z.object({
   type: z.literal("external"),
   id: z.string(),
   label: z.string(),
-  url: z.string().url(),
+  url: z.url(),
   sortOrder: z.number(),
 });
 
@@ -48,7 +48,7 @@ export const documentSchema = z.object({
   id: z.string(),
   slugId: z.string(),
   title: z.string(),
-  url: z.string().url(),
+  url: z.url(),
   contentHtml: z.string(),
   updatedAt: z.string(),
   parentRefs: z.array(z.object({
@@ -61,7 +61,7 @@ export const issueSchema = z.object({
   id: z.string(),
   identifier: z.string(),
   title: z.string(),
-  url: z.string().url(),
+  url: z.url(),
   projectId: z.string(),
   parentId: z.string().nullable(),
   childIds: z.array(z.string()),
@@ -85,7 +85,7 @@ export const projectSchema = z.object({
   id: z.string(),
   name: z.string(),
   slugId: z.string(),
-  url: z.string().url(),
+  url: z.url(),
   summary: z.string(),
   descriptionHtml: z.string(),
   status: statusSchema,
@@ -119,12 +119,12 @@ export const publicSnapshotSchema = z.object({
   generatedAt: z.string(),
   source: z.object({
     initiativeId: z.string(),
-    workspaceUrl: z.string().url().nullable(),
+    workspaceUrl: z.url().nullable(),
   }),
   initiative: z.object({
     id: z.string(),
     name: z.string(),
-    url: z.string().url(),
+    url: z.url(),
     summary: z.string(),
     descriptionHtml: z.string(),
     status: z.string(),

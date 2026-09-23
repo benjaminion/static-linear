@@ -62,7 +62,7 @@ build above, and `git diff --check`. Never depend on live Linear access for test
 
 ## Implementation conventions
 
-- Requires Node.js 22 or later and uses TypeScript/ES modules.
+- Requires Node.js 22.19 or later and uses TypeScript/ES modules.
 - Keep GraphQL queries compatible with Linear's public schema; validate query edits
   with `npx tsx scripts/validate-queries.ts /path/to/schema.graphql` when a schema is
   available.
