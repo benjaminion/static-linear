@@ -7,7 +7,7 @@ const status = { name: "In Progress", type: "started", color: "#123456" };
 
 function rawProject(): RawProject {
   return {
-    id: "project-1", name: "Project", slugId: "project", url: "https://linear.app/acme/project/project",
+    id: "project-1", name: "Project", trashed: false, slugId: "project", url: "https://linear.app/acme/project/project",
     description: "Summary", content: "# Project", status, projectMilestones: { nodes: [], pageInfo },
   };
 }
@@ -31,6 +31,23 @@ function normalize(issues: RawIssue[]) {
 }
 
 describe("normalizeSnapshot", () => {
+  it("omits trashed projects and their tasks from the public snapshot", () => {
+    const deleted = { ...rawProject(), id: "deleted-project", name: "Deleted", trashed: true };
+    const deletedIssue = rawIssue("deleted-task", "ACME-2");
+    deletedIssue.project.id = deleted.id;
+    const snapshot = normalizeSnapshot({
+      initiativeId: "initiative-1", generatedAt: "2026-01-03T00:00:00Z",
+      initiative: { id: "initiative-1", name: "Initiative", url: "https://linear.app/acme/initiative/one", status: "Active" },
+      projects: [rawProject(), deleted],
+      issues: [rawIssue("active", "ACME-1"), deletedIssue],
+    });
+
+    expect(snapshot.initiative.projectIds).toEqual(["project-1"]);
+    expect(Object.keys(snapshot.projects)).toEqual(["project-1"]);
+    expect(Object.keys(snapshot.issues)).toEqual(["active"]);
+    expect(JSON.stringify(snapshot)).not.toContain("deleted-project");
+  });
+
   it("constructs child references from parent IDs", () => {
     const snapshot = normalize([rawIssue("one", "ACME-1"), rawIssue("two", "ACME-2", "one")]);
     expect(snapshot.issues.one.childIds).toEqual(["two"]);
@@ -56,6 +73,24 @@ describe("normalizeSnapshot", () => {
     expect(snapshot.relations).toHaveLength(1);
     expect(snapshot.relations[0].boundaryId).not.toBeNull();
     expect(JSON.stringify(snapshot)).not.toContain("ACME-2");
+  });
+
+  it("omits trashed tasks and relations to trashed tasks without hiding real external dependencies", () => {
+    const active = rawIssue("active", "FIN-7");
+    const deleted = rawIssue("deleted", "FIN-8");
+    deleted.trashed = true;
+    active.relations.nodes.push(
+      { id: "deleted-relation", type: "blocks", issue: { id: "active" }, relatedIssue: { id: "deleted", trashed: true } },
+      { id: "external-relation", type: "blocks", issue: { id: "active" }, relatedIssue: { id: "outside", trashed: null } },
+    );
+
+    const snapshot = normalize([active, deleted]);
+
+    expect(Object.keys(snapshot.issues)).toEqual(["active"]);
+    expect(snapshot.projects["project-1"].issueIds).toEqual(["active"]);
+    expect(snapshot.relations.map((relation) => relation.id)).toEqual(["external-relation"]);
+    expect(Object.keys(snapshot.boundaries)).toHaveLength(1);
+    expect(JSON.stringify(snapshot)).not.toContain("FIN-8");
   });
 
   it("anonymizes issue relations that leave the initiative", () => {

@@ -52,7 +52,8 @@ export async function syncLinearSnapshot(options: {
   if (!initiativeId) throw new Error("LINEAR_INITIATIVE_ID is required. Add it to .env.local.");
 
   const client = options.client ?? new LinearGraphQLClient(apiKey, options.endpoint);
-  const { initiative, projects } = await fetchInitiativeAndProjects(client, initiativeId);
+  const { initiative, projects: allProjects } = await fetchInitiativeAndProjects(client, initiativeId);
+  const projects = allProjects.filter((project) => !project.trashed);
   const issues = projects.length ? await fetchIssues(client, projects.map((project) => project.id)) : [];
   await fillOverflowConnections(client, issues);
   await fillMilestoneOverflow(client, projects);

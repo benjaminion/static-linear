@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { LinearGraphQLClient } from "../src/lib/linear/client";
 import { syncLinearSnapshot } from "../src/lib/linear/sync";
+import { ISSUE_DETAIL_PAGE_QUERY, ISSUES_QUERY } from "../src/lib/linear/queries";
 import type { RawDocument, RawProject } from "../src/lib/linear/normalize";
 
 const done = { hasNextPage: false, endCursor: null };
@@ -23,6 +24,7 @@ function project(): RawProject {
   return {
     id: "project-1",
     name: "Project",
+    trashed: false,
     slugId: "project",
     url: "https://linear.app/acme/project/project",
     description: "Project",
@@ -34,7 +36,7 @@ function project(): RawProject {
   };
 }
 
-function clientWithResources(exportFailure?: Error) {
+function clientWithResources(exportFailure?: Error, projects: RawProject[] = [project()]) {
   const first = document("doc-first", "aaaaaaaaaaaa", 10);
   const second = document("doc-second", "bbbbbbbbbbbb", 20);
   const linked = document("doc-linked", "cccccccccccc", 0);
@@ -60,7 +62,7 @@ function clientWithResources(exportFailure?: Error) {
               }],
               pageInfo: done,
             },
-            projects: { nodes: [project()], pageInfo: done },
+            projects: { nodes: projects, pageInfo: done },
           },
         };
       case "PublicIssues": return { issues: { nodes: [], pageInfo: done } };
@@ -93,6 +95,29 @@ function clientWithResources(exportFailure?: Error) {
 }
 
 describe("Linear resource sync", () => {
+  it("requests deletion state for tasks and relation endpoints on every page", () => {
+    expect(ISSUES_QUERY).toMatch(/archivedAt\s+trashed\s+project/);
+    expect(ISSUES_QUERY.match(/relatedIssue \{ id trashed \}/g)).toHaveLength(2);
+    expect(ISSUE_DETAIL_PAGE_QUERY.match(/relatedIssue \{ id trashed \}/g)).toHaveLength(2);
+  });
+
+  it("excludes trashed projects before fetching their tasks or resources", async () => {
+    const deleted = { ...project(), id: "deleted-project", name: "Deleted", trashed: true };
+    const client = clientWithResources(undefined, [project(), deleted]);
+    const snapshot = await syncLinearSnapshot({
+      apiKey: "test-key",
+      initiativeId: "initiative-1",
+      client: client as unknown as LinearGraphQLClient,
+      write: false,
+    });
+
+    expect(snapshot.initiative.projectIds).toEqual(["project-1"]);
+    expect(Object.keys(snapshot.projects)).toEqual(["project-1"]);
+    expect(client.request).toHaveBeenCalledWith(expect.stringContaining("trashed"), { id: "initiative-1", after: null }, "PublicInitiative");
+    expect(client.request).not.toHaveBeenCalledWith(expect.any(String), { id: "deleted-project" }, "PublicProjectResources");
+    expect(client.request).toHaveBeenCalledWith(expect.any(String), { projectIds: ["project-1"], after: null }, "PublicIssues");
+  });
+
   it("paginates attached documents, resolves Linear link resources, and rewrites prose", async () => {
     const client = clientWithResources();
     const snapshot = await syncLinearSnapshot({

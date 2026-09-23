@@ -41,6 +41,7 @@ export const INITIATIVE_QUERY = /* GraphQL */ `
         nodes {
           id
           name
+          trashed
           slugId
           url
           description
@@ -173,6 +174,7 @@ export const ISSUES_QUERY = /* GraphQL */ `
         completedAt
         canceledAt
         archivedAt
+        trashed
         project { id }
         parent { id }
         state { name type color }
@@ -195,8 +197,8 @@ export const ISSUES_QUERY = /* GraphQL */ `
           nodes {
             id
             type
-            issue { id }
-            relatedIssue { id }
+            issue { id trashed }
+            relatedIssue { id trashed }
           }
           pageInfo { hasNextPage endCursor }
         }
@@ -204,8 +206,8 @@ export const ISSUES_QUERY = /* GraphQL */ `
           nodes {
             id
             type
-            issue { id }
-            relatedIssue { id }
+            issue { id trashed }
+            relatedIssue { id trashed }
           }
           pageInfo { hasNextPage endCursor }
         }
@@ -229,11 +231,11 @@ export const ISSUE_DETAIL_PAGE_QUERY = /* GraphQL */ `
         pageInfo { hasNextPage endCursor }
       }
       relations(first: 50, after: $relationsAfter, includeArchived: true) {
-        nodes { id type issue { id } relatedIssue { id } }
+        nodes { id type issue { id trashed } relatedIssue { id trashed } }
         pageInfo { hasNextPage endCursor }
       }
       inverseRelations(first: 50, after: $inverseAfter, includeArchived: true) {
-        nodes { id type issue { id } relatedIssue { id } }
+        nodes { id type issue { id trashed } relatedIssue { id trashed } }
         pageInfo { hasNextPage endCursor }
       }
       labels(first: 50, after: $labelsAfter) {

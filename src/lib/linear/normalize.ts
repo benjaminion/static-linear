@@ -22,7 +22,7 @@ export interface RawExternalResource {
   document?: RawDocument | null;
 }
 export interface RawProject {
-  id: string; name: string; slugId: string; url: string;
+  id: string; name: string; trashed: boolean; slugId: string; url: string;
   description?: string | null; content?: string | null; health?: string | null;
   startDate?: string | null; targetDate?: string | null;
   completedAt?: string | null; canceledAt?: string | null;
@@ -36,13 +36,16 @@ export interface RawComment {
   id: string; body: string; createdAt: string; updatedAt: string; user?: RawPerson | null;
 }
 export interface RawRelation {
-  id: string; type: string; issue: { id: string }; relatedIssue: { id: string };
+  id: string; type: string;
+  issue: { id: string; trashed?: boolean | null };
+  relatedIssue: { id: string; trashed?: boolean | null };
 }
 export interface RawIssue {
   id: string; identifier: string; title: string; url: string; description?: string | null;
   priority: number; priorityLabel?: string | null; estimate?: number | null;
   dueDate?: string | null; createdAt: string; updatedAt: string;
   completedAt?: string | null; canceledAt?: string | null; archivedAt?: string | null;
+  trashed?: boolean | null;
   project: { id: string }; parent?: { id: string } | null; state: RawStatus;
   assignee?: RawPerson | null;
   labels: RawConnection<{ id: string; name: string; color?: string | null }>;
@@ -66,7 +69,10 @@ export function normalizeSnapshot(input: {
   initiativeId: string;
   generatedAt?: string;
 }): PublicSnapshot {
-  const publicIssues = input.issues.filter((issue) => !issue.archivedAt);
+  const publicProjects = input.projects.filter((project) => !project.trashed);
+  const publicProjectIds = new Set(publicProjects.map((project) => project.id));
+  const publicIssues = input.issues.filter((issue) =>
+    !issue.archivedAt && !issue.trashed && publicProjectIds.has(issue.project.id));
   const rawDocuments = new Map<string, RawDocument>();
   const documentParentRefs = new Map<string, Map<string, { type: "initiative" | "project"; id: string }>>();
   const initiativeResources = normalizeResources(
@@ -77,7 +83,7 @@ export function normalizeSnapshot(input: {
     documentParentRefs,
   );
   const projectResources = new Map<string, PublicSnapshot["projects"][string]["resources"]>();
-  for (const project of input.projects) {
+  for (const project of publicProjects) {
     projectResources.set(project.id, normalizeResources(
       project.documents?.nodes ?? [],
       project.externalLinks?.nodes ?? [],
@@ -98,6 +104,7 @@ export function normalizeSnapshot(input: {
 
   for (const issue of publicIssues) {
     for (const relation of [...issue.relations.nodes, ...issue.inverseRelations.nodes]) {
+      if (relation.issue.trashed || relation.relatedIssue.trashed) continue;
       if (relationsById.has(relation.id)) continue;
       const sourceId = publicEndpoint(relation.issue.id, includedIssueIds, boundaries);
       const targetId = publicEndpoint(relation.relatedIssue.id, includedIssueIds, boundaries);
@@ -152,7 +159,7 @@ export function normalizeSnapshot(input: {
   }
 
   const projects: PublicSnapshot["projects"] = {};
-  for (const project of input.projects) {
+  for (const project of publicProjects) {
     projects[project.id] = {
       id: project.id,
       name: project.name,
@@ -211,7 +218,7 @@ export function normalizeSnapshot(input: {
       status: input.initiative.status,
       health: input.initiative.health ?? null,
       targetDate: input.initiative.targetDate ?? null,
-      projectIds: input.projects.map((project) => project.id),
+      projectIds: publicProjects.map((project) => project.id),
       latestUpdate: normalizeStatusUpdate(input.initiative.lastUpdate, markdownOptions),
       resources: initiativeResources,
     },
